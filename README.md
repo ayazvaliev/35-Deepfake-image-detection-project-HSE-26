@@ -31,7 +31,7 @@
 | --- | --- |
 | Дмитрий Маслов | [@Dima-ML](https://github.com/Dima-ML) |
 | Аяз Валиев | [@ayazvaliev](https://github.com/ayazvaliev) |
-| Герта Лазовская | [@username](https://github.com/username) |
+| Герта Лазовская | [@Gerta-L](https://github.com/Gerta-L) |
 | Андрей Устамчук | [@username](https://github.com/username) |
 
 **Куратор:** Илья Скворцов
