@@ -1,0 +1,7 @@
+jupyterlab==4.6.4
+kaggle==2.2.4
+matplotlib==3.11.2
+numpy==2.4.6
+pandas==3.0.6
+pillow==12.3.0
+scikit-learn==1.9.1
