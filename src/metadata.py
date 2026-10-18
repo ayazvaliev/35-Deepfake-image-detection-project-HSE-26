@@ -19,7 +19,7 @@ STD_LUMA = np.array([
     72, 92, 95, 98, 112, 100, 103, 99,
 ])
 MAX_QUALITY_ERROR = 1.0
-# |AUC - 0.5| or TVD above this counts as a real/fake difference
+# max(AUC, 1 - AUC) - 0.5 or TVD above this counts as a real/fake difference
 DIFF_THRESHOLD = 0.05
 SUBSAMPLING = {0: "4:4:4", 1: "4:2:2", 2: "4:2:0"}
 
@@ -91,7 +91,9 @@ def compare_classes(df, numeric, categorical):
         if field in numeric:
             known = df[field].notna()
             if df.loc[known, field].nunique() > 1:
-                row["auc"] = round(roc_auc_score(df.loc[known, "label"], df.loc[known, field]), 3)
+                auc = roc_auc_score(df.loc[known, "label"], df.loc[known, field])
+                row["auc"] = round(max(auc, 1 - auc), 3)
+                row["higher"] = "fake" if auc > 0.5 else "real"
             row["real"] = f"median {real.median()}, [{real.min()}, {real.max()}]"
             row["fake"] = f"median {fake.median()}, [{fake.min()}, {fake.max()}]"
         else:
@@ -101,7 +103,7 @@ def compare_classes(df, numeric, categorical):
             row["tvd"] = round(real_shares.sub(fake_shares, fill_value=0).abs().sum() / 2, 3)
             row["real"] = value_shares(real)
             row["fake"] = value_shares(fake)
-        score = abs(row.get("auc", 0.5) - 0.5) if field in numeric else row["tvd"]
+        score = row.get("auc", 0.5) - 0.5 if field in numeric else row["tvd"]
         row["differs"] = score >= DIFF_THRESHOLD
         rows.append(row)
     return pd.DataFrame(rows)
