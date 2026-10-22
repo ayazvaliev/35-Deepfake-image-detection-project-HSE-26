@@ -20,3 +20,12 @@ download() {
 
 download xhlulu/140k-real-and-fake-faces data/raw/140k
 download manjilkarki/deepfake-and-real-images data/raw/openforensics
+
+model=models/face_landmarker.task
+if [ -f "$model" ]; then
+    echo "$model уже есть, пропускаю"
+else
+    mkdir -p models
+    curl -fsSL -o "$model.part" https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+    mv "$model.part" "$model"
+fi
