@@ -12,6 +12,9 @@ from src.config import PROCESSED_DIR, RAW_DIR, ROOT, SEED
 
 MODEL_PATH = ROOT / "models" / "face_landmarker.task"
 FIELDS = ["n_faces", "face_area", "face_cx", "face_cy", "yaw", "roll", "brightness", "bg_brightness"]
+IMAGE_FIELDS = ["sharpness", "chroma", "is_gray", "face_sharpness", "bg_sharpness"]
+# preliminary threshold on mean LAB chroma for near-grayscale images
+GRAY_CHROMA = 3
 TO_LAB = ImageCms.buildTransform(ImageCms.createProfile("sRGB"), ImageCms.createProfile("LAB"), "RGB", "LAB")
 
 
@@ -28,14 +31,29 @@ def face_box(landmarks):
     return xs.min(), ys.min(), xs.max(), ys.max()
 
 
+def laplacian(x):
+    return x[:-2, 1:-1] + x[2:, 1:-1] + x[1:-1, :-2] + x[1:-1, 2:] - 4 * x[1:-1, 1:-1]
+
+
 def image_face_stats(path, landmarker):
     with Image.open(path) as im:
         rgb = im.convert("RGB")
     # Pillow stores L of LAB as 0..255, rescale to 0..100
     lab = ImageCms.applyTransform(rgb, TO_LAB)
     lightness = np.array(lab.getchannel("L"), dtype=np.float64) * 100 / 255
+    # a and b are stored with +128 offset
+    a = np.array(lab.getchannel("A"), dtype=np.float64) - 128
+    b = np.array(lab.getchannel("B"), dtype=np.float64) - 128
+    chroma = np.sqrt(a**2 + b**2).mean()
+    lap = laplacian(lightness)
     result = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.asarray(rgb)))
-    stats = {"n_faces": len(result.face_landmarks), "brightness": lightness.mean()}
+    stats = {
+        "n_faces": len(result.face_landmarks),
+        "brightness": lightness.mean(),
+        "sharpness": lap.var(),
+        "chroma": chroma,
+        "is_gray": chroma < GRAY_CHROMA,
+    }
     if not result.face_landmarks:
         return stats
 
@@ -56,6 +74,8 @@ def image_face_stats(path, landmarker):
         "yaw": math.degrees(math.asin(-np.clip(rot[2, 0], -1, 1))),
         "roll": math.degrees(math.atan2(rot[1, 0], rot[0, 0])),
         "bg_brightness": lightness[outside].mean() if outside.any() else np.nan,
+        "face_sharpness": lap[~outside[1:-1, 1:-1]].var(),
+        "bg_sharpness": lap[outside[1:-1, 1:-1]].var() if outside[1:-1, 1:-1].any() else np.nan,
     })
     return stats
 
@@ -65,7 +85,8 @@ def build_face_stats():
     cache = PROCESSED_DIR / "face_stats.csv"
     if cache.exists():
         stats = pd.read_csv(cache)
-        if stats["path"].tolist() == sample["path"].tolist():
+        fresh = stats["path"].tolist() == sample["path"].tolist()
+        if fresh and set(FIELDS + IMAGE_FIELDS) <= set(stats.columns):
             return stats
 
     options = FaceLandmarkerOptions(
@@ -76,7 +97,7 @@ def build_face_stats():
     )
     with FaceLandmarker.create_from_options(options) as landmarker:
         rows = [image_face_stats(RAW_DIR / p, landmarker) for p in sample["path"]]
-    stats = pd.concat([sample, pd.DataFrame(rows, columns=FIELDS)], axis=1)
+    stats = pd.concat([sample, pd.DataFrame(rows, columns=FIELDS + IMAGE_FIELDS)], axis=1)
     stats.to_csv(cache, index=False)
     return stats
 
