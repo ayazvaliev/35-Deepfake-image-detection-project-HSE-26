@@ -3,6 +3,7 @@ kaggle==2.2.4
 matplotlib==3.11.2
 mediapipe==1.1.1
 numpy==2.4.6
+opencv-contrib-python==5.0.0.93
 pandas==3.0.6
 pillow==12.3.0
 scikit-learn==1.9.1
