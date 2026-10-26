@@ -1,4 +1,5 @@
 import pandas as pd
+from scipy.stats import ks_2samp
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
@@ -82,3 +83,19 @@ def cheater_importance(df, ds):
     result = permutation_importance(model, x_valid, y_valid, scoring="roc_auc", n_repeats=10, random_state=SEED)
     importance = pd.DataFrame({"mean": result.importances_mean, "std": result.importances_std}, index=features)
     return importance.sort_values("mean", ascending=False).round(4)
+
+
+def sharpness_by_group(df, groups, field):
+    rows = []
+    for group, part in df.groupby(groups, observed=True):
+        real = part.loc[part["label"] == 0, field]
+        fake = part.loc[part["label"] == 1, field]
+        ks = ks_2samp(real, fake)
+        rows.append({
+            "group": str(group), "n_real": len(real), "n_fake": len(fake),
+            "ks_d": round(ks.statistic, 3), "p_value": ks.pvalue,
+            "higher": "real" if real.median() > fake.median() else "fake",
+            # oriented so that above 0.5 means real is sharper
+            "auc_real_sharper": round(roc_auc_score(part["label"] == 0, part[field]), 3),
+        })
+    return pd.DataFrame(rows)
