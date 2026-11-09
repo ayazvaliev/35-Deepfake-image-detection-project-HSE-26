@@ -1,0 +1,41 @@
+name: deepfake-eda
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip=24.3.1
+  - pip:
+      - --index-url https://pypi.org/simple
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - numpy==1.26.4
+      - pandas==2.2.3
+      - scipy==1.14.1
+      - pyarrow==18.1.0
+      - scikit-learn==1.5.2
+      - matplotlib==3.9.2
+      - seaborn==0.13.2
+      - Pillow==11.0.0
+      - opencv-contrib-python==4.11.0.86
+      - mediapipe==0.10.21
+      - jax==0.4.35
+      - jaxlib==0.4.35
+      - ImageHash==4.3.1
+      - pycocotools==2.0.8
+      - statsmodels==0.14.4
+      - umap-learn==0.5.7
+      - torch==2.5.1
+      - torchvision==0.20.1
+      - nbformat==5.10.4
+      - nbclient==0.10.2
+      - nbconvert==7.16.4
+      - jupyterlab==4.3.3
+      - ipykernel==6.29.5
+      - gdown==5.2.0
+      - remotezip==0.12.3
+      - requests==2.32.3
+      - beautifulsoup4==4.12.3
+      - ijson==3.3.0
+      - tqdm==4.67.1
+      - PyYAML==6.0.2
+      - kaggle==1.6.17
