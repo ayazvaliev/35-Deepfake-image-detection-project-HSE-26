@@ -137,6 +137,10 @@ def leak_table(hashes, confirmed):
     return pd.DataFrame(rows)
 
 
-def clean_test(hashes, confirmed):
+def clean_split(hashes, confirmed, split, sources):
     splits = partner_splits(hashes, confirmed)
-    return (hashes["split"] == "test") & ~splits.apply(lambda s: bool(s & {"train", "valid"}))
+    return (hashes["split"] == split) & ~splits.apply(lambda s: bool(s & set(sources)))
+
+
+def clean_test(hashes, confirmed):
+    return clean_split(hashes, confirmed, "test", ["train", "valid"])

@@ -80,9 +80,11 @@ def image_face_stats(path, landmarker):
     return stats
 
 
-def build_face_stats():
-    sample = face_sample(pd.read_csv(PROCESSED_DIR / "index.csv"))
-    cache = PROCESSED_DIR / "face_stats.csv"
+def build_face_stats(sample=None, name="face_stats"):
+    if sample is None:
+        sample = face_sample(pd.read_csv(PROCESSED_DIR / "index.csv"))
+    sample = sample.reset_index(drop=True)
+    cache = PROCESSED_DIR / f"{name}.csv"
     if cache.exists():
         stats = pd.read_csv(cache)
         fresh = stats["path"].tolist() == sample["path"].tolist()
