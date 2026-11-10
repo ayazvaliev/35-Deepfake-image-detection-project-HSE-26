@@ -61,9 +61,9 @@ def make_baseline(c):
     return make_pipeline(StandardScaler(), LogisticRegression(C=c, max_iter=5000, random_state=SEED))
 
 
-def fit_baseline(x_train, y_train, x_valid, y_valid):
+def fit_baseline(x_train, y_train, x_valid, y_valid, c_grid=C_GRID):
     rows = []
-    for c in C_GRID:
+    for c in c_grid:
         model = make_baseline(c).fit(x_train, y_train)
         rows.append({"C": c, "valid_auc": roc_auc_score(y_valid, model.predict_proba(x_valid)[:, 1])})
     grid = pd.DataFrame(rows)
