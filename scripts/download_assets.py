@@ -26,8 +26,6 @@ MODELS = {
     'face_landmarker.task': (
         'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
         '64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff'),
-    'resnet18-f37072fd.pth': ('https://download.pytorch.org/models/resnet18-f37072fd.pth',
-        'f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec'),
 }
 ZENODO = 'https://zenodo.org/records/5528418/files/'
 MODELSCOPE = 'https://www.modelscope.cn/api/v1/datasets/DDLteam/MFFI/repo?Revision=fd9fce422da6ff231906dc06e984674f2332919a&FilePath='
@@ -434,7 +432,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('kind', choices=['models', 'datasets'])
     parser.add_argument('--datasets', nargs='+', default=['140k', 'openforensics', 'mffi'],
-                        choices=['140k', 'openforensics', 'openforensics_crops', 'mffi'])
+                        choices=['140k', 'openforensics', 'mffi'])
     parser.add_argument('--limit', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--skip-test', action='store_true')
@@ -450,8 +448,6 @@ def main():
     for dataset in args.datasets:
         if dataset == '140k':
             kaggle_dataset('xhlulu/140k-real-and-fake-faces', '140k')
-        elif dataset == 'openforensics_crops':
-            kaggle_dataset('manjilkarki/deepfake-and-real-images', 'openforensics_crops')
         elif dataset == 'openforensics':
             openforensics(args.limit, args.seed)
         elif dataset == 'mffi':

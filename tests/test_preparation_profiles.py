@@ -68,6 +68,7 @@ class PreparationProfileTests(unittest.TestCase):
         cleanup = [command for command in plan["commands"] if Path(command[1]).name == "release_processed_sources.py"]
         self.assertEqual(len(cleanup), 3)
         self.assertTrue(all("--delete-checkpoint" in command for command in cleanup))
+        self.assertTrue(all(Path(command[1]).is_file() for command in plan["commands"]))
 
     def test_processed_sampling_preserves_all_faces_and_original_features_of_selected_images(self):
         records = []

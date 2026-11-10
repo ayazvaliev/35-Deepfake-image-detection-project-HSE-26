@@ -33,6 +33,5 @@ fi
 condarc=$(mktemp)
 trap 'rm -f "$condarc"' EXIT
 printf "channels:\n  - conda-forge\ndefault_channels: []\n" > "$condarc"
-CONDARC="$condarc" "$conda_root/bin/conda" env update -f environment.yml
-"$conda_root/bin/conda" run -n deepfake-eda python -m ipykernel install --user --name deepfake-eda --display-name 'Python (deepfake EDA)'
-"$conda_root/bin/conda" run -n deepfake-eda python -m pip check
+CONDA_NO_PLUGINS=true CONDA_SOLVER=classic CONDARC="$condarc" "$conda_root/bin/conda" env update -f environment.yml
+"$conda_root/bin/conda" run -n deepfake-preprocessing python -m pip check

@@ -90,8 +90,6 @@ def build_plan(config, profile="full", workers=4, raw_root=None, config_path=Non
         command("index_datasets.py", *index_args)
         command("preprocess.py", "--manifest", manifest, "--output-dir", processed / dataset, *preprocessing_args)
         if compact_storage:
-            if dataset == "df40":
-                command("cache_df40_eda_pixels.py", "--metadata", processed / dataset / "metadata.parquet")
             command("release_processed_sources.py", "--metadata", processed / dataset / "metadata.parquet",
                     "--raw-root", raw_root / dataset, "--delete-checkpoint")
     manifests = [processed / dataset / "metadata.parquet" for dataset in DATASETS]
@@ -108,7 +106,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", choices=("full", "demo"), default="full")
     parser.add_argument("--config", type=Path, default=ROOT / "configs/composite.yml")
-    parser.add_argument("--workers", type=int, default=int(os.environ.get("EDA_WORKERS", "4")))
+    parser.add_argument("--workers", type=int, default=int(os.environ.get("PREPROCESS_WORKERS", "4")))
     parser.add_argument("--raw-root", type=Path)
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

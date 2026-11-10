@@ -5,13 +5,11 @@ import unittest
 
 import cv2
 import numpy as np
-import pandas as pd
 
-from scripts.compact_source_crops import compact_source_crops
 from src.preprocessing.faces import adaptive_face_crop, square_face_crop
 from src.preprocessing.source_crops import read_source_crop, save_source_crop
 from src.preprocessing.verification_views import (
-    normalized_original_view, save_crop_verification_view, save_original_verification_view, view_pixel_sha256,
+    save_original_verification_view, view_pixel_sha256,
 )
 
 
@@ -84,27 +82,6 @@ class ExactSourceCropTests(unittest.TestCase):
         wrong = (bounds[0] + 1, *bounds[1:])
         with self.assertRaisesRegex(ValueError, "changes preprocessing pixels"):
             save_source_crop(crop, wrong, self.original, self.root / "descriptors")
-
-    def test_postconversion_preserves_all_pixels_and_releases_only_old_crop_caches(self):
-        crop, bounds, _ = adaptive_face_crop(self.image, [30, 30, 150, 150])
-        old_cache = save_crop_verification_view(crop, self.root / "crops", self.original)
-        metadata_path = self.root / "metadata.parquet"
-        row = {"sample_id": "example", "target": 1, "crop_sha256": view_pixel_sha256(crop),
-               "crop_bounds": list(bounds), "training_crop_removed": True, **self.original, **old_cache}
-        pd.DataFrame([row]).to_parquet(metadata_path, index=False)
-        audit = compact_source_crops(metadata_path, delete_old_caches=True, workers=2)
-        current = pd.read_parquet(metadata_path).iloc[0]
-        self.assertEqual(current.crop_verification_codec, "source_crop")
-        self.assertFalse(Path(old_cache["crop_verification_path"]).exists())
-        self.assertTrue(Path(self.original["original_verification_path"]).exists())
-        self.assertTrue(audit["all_crop_pixels_equal"])
-        self.assertTrue(audit["files"][0]["all_nonstorage_columns_equal"])
-        self.assertEqual(audit["converted_crop_records"], 1)
-        self.assertEqual(current.crop_sha256, row["crop_sha256"])
-        restored = read_source_crop(current.crop_verification_path, current.crop_verification_sha256,
-                                    current.crop_verification_pixel_sha256, current.crop_verification_size)
-        np.testing.assert_array_equal(restored, crop)
-
 
 if __name__ == "__main__":
     unittest.main()
