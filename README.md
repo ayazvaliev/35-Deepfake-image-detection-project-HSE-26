@@ -63,6 +63,8 @@
 
 ## 📊 Результаты EDA
 
+Общий EDA команды – [EDA.ipynb](EDA.ipynb), практическая применимость проекта – [docs/practical_applicability.pdf](docs/practical_applicability.pdf).
+
 ### 140k Real and Fake Faces
 
 Автор: [@Dima-ML](https://github.com/Dima-ML) · ноутбук: [notebooks/eda_140k.ipynb](notebooks/eda_140k.ipynb) · для сравнения – подвыборка 10 тыс. Kaggle-кропов OpenForensics
@@ -273,6 +275,7 @@ bash scripts/download_models.sh --include-baseline
 │   ├── processed/       # кэши признаков и препроцессинга (не в git)
 │   └── splits/          # собранные сплиты (не в git)
 ├── datasets/            # опубликованные композитные сплиты: описание в JSON, таблица в Git LFS
+├── docs/                # документы проекта
 ├── models/              # веса YuNet, MediaPipe, ResNet18 – создаётся загрузчиком (не в git)
 ├── notebooks/           # EDA по датасетам: eda_140k, eda_openforensics, eda_mffi, eda_df40
 ├── scripts/             # окружение, загрузка данных и моделей, препроцессинг, сборка сплитов
@@ -280,6 +283,7 @@ bash scripts/download_models.sh --include-baseline
 │   ├── notebook_src/    # функции EDA, которые импортируют ноутбуки
 │   └── preprocessing/   # общий препроцессинг: кроп лиц, JPEG, дубликаты, сплиты
 ├── tests/               # unittest для src/preprocessing и скриптов загрузки
+├── EDA.ipynb            # общий EDA команды
 ├── environment.yml      # общее окружение: Python 3.11, зависимости с точными версиями
 ├── LICENSE
 └── README.md
