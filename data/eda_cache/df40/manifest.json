@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "scope": "preprocessing_pixel_illustrations_only",
+  "origin": "extracted_from_verified_executed_notebook",
+  "metadata_path": "data/processed/df40/metadata.parquet",
+  "metadata_sha256": "ee34a665e869b25ffc18ba13381bb0576cabf189ca159861bd4cf38fa0ef802b",
+  "source_notebook_path": "notebooks/eda_df40.ipynb",
+  "source_notebook_sha256": "c3411479a7989eb0f9a3e9ea6ca5923e0c896bb02b139079951fb255527716da",
+  "source_commit": "cc4c3a0f4f928cb5113a399d5687048e0c59eb92",
+  "quality_sample_size": 3000,
+  "seed": 42,
+  "artifacts": {
+    "examples": {
+      "path": "examples.png",
+      "sha256": "f28781dd1f5b1a703ab5c48f119504298f5ac6086118588c53c26dacede990ce",
+      "cell_id": "df40-009",
+      "output_index": 0
+    },
+    "image_properties": {
+      "path": "image_properties.png",
+      "sha256": "d8c1c7e65dc17ec66cbf5b26c4c8d8da2e471854c05bc0d1b40cb0ee7bfa1491",
+      "cell_id": "df40-011",
+      "output_index": 1
+    },
+    "source_files": {
+      "path": "source_files.png",
+      "sha256": "a1223bbeebaf8d126cc1fdbf44f564b657aa5c1bdb1f3a9cafd1b925a1c741ab",
+      "cell_id": "df40-011",
+      "output_index": 2
+    },
+    "quality_summary": {
+      "path": "quality_summary.html",
+      "sha256": "840415c1214a6502a9b6af5e801b99297e599d119e2a73e6bd3bcc10d0d44aa8",
+      "cell_id": "df40-011",
+      "output_index": 3
+    }
+  },
+  "source_notebook_snapshot": "data/splits/author_baseline/eda_df40_executed.ipynb"
+}

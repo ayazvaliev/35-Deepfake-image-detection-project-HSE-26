@@ -1,4 +1,5 @@
 splits:
+  policy: global_balanced
   seed: 42
   validation_fraction: 0.15
   test_fraction: 0.15

@@ -61,7 +61,7 @@ class SplitTests(unittest.TestCase):
             {"source_group": "heldout", "author_split": "test"},
             {"source_group": "onlytrain", "author_split": "train"},
         ])
-        result = build_composite_splits(data)
+        result = build_composite_splits(data, split_policy="author_preserved")
         self.assertEqual(result["learn"]["sample_id"].tolist(), ["image-4"])
         self.assertEqual(result["validate"]["sample_id"].tolist(), ["image-1"])
         self.assertEqual(result["test"]["sample_id"].tolist(), ["image-3"])
@@ -93,7 +93,7 @@ class SplitTests(unittest.TestCase):
             {"dataset": "b", "phash": "0000000000000003", "author_split": "val"},
             {"dataset": "c", "phash": "ffffffffffffffff", "author_split": "train"},
         ])
-        result = build_composite_splits(data, near_duplicate_threshold=1, near_duplicate_verifier=lambda first, second: True)
+        result = build_composite_splits(data, near_duplicate_threshold=1, near_duplicate_verifier=lambda first, second: True, split_policy="author_preserved")
         self.assertEqual(result["excluded"]["sample_id"].tolist(), ["image-0"])
         self.assertEqual(result["report"]["near_duplicate_candidate_pairs"], 1)
         self.assertEqual(result["report"]["contradictory_crop_rows"], 0)
@@ -110,7 +110,7 @@ class SplitTests(unittest.TestCase):
             {"source_group": "source-b", "author_split": "test", "eligible": False,
              "crop_sha256": "gray", "phash": "00000000000000fe", "target": 1},
         ])
-        result = build_composite_splits(data, near_duplicate_threshold=1)
+        result = build_composite_splits(data, near_duplicate_threshold=1, split_policy="author_preserved")
         self.assertEqual(result["train"]["sample_id"].tolist(), ["image-0"])
         self.assertEqual(result["test"]["sample_id"].tolist(), ["image-2"])
         self.assertEqual(set(result["excluded"]["sample_id"]), {"image-1", "image-3"})
@@ -130,7 +130,7 @@ class SplitTests(unittest.TestCase):
                     "transformation_tags": tags,
                 })
         source = manifest(rows)
-        result = build_composite_splits(source)
+        result = build_composite_splits(source, split_policy="author_preserved")
         combined = pd.concat([result[name] for name in ("train", "validate", "test")])
         self.assertEqual(combined["generator"].nunique(), 1)
         self.assertEqual(combined["manipulation"].nunique(), 1)
@@ -168,7 +168,7 @@ class SplitTests(unittest.TestCase):
             {"dataset": "df40", "source_group": "held-out", "author_split": "test"},
             {"dataset": "df40", "source_group": "held-out", "author_split": "train"},
         ])
-        result = build_composite_splits(manifest(rows))
+        result = build_composite_splits(manifest(rows), split_policy="author_preserved")
         self.assertGreater(len(result["learn"]), 0)
         self.assertGreater(len(result["validate"]), 0)
         self.assertEqual(set(result["validate"]["author_split"]), {"train"})
@@ -219,6 +219,8 @@ class SplitTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stderr)
             audit = json.loads((output / "audit.json").read_text())
             self.assertTrue(audit["ready_for_training"])
+            self.assertEqual(audit["split_policy"], "global_balanced")
+            self.assertEqual(audit["author_overlap_removed"], 0)
             learn = pd.read_parquet(output / "train.parquet")
             validate = pd.read_csv(output / "validate.csv")
             self.assertEqual(len(learn) + len(validate) + audit["test_rows"], len(data))
@@ -227,7 +229,7 @@ class SplitTests(unittest.TestCase):
 
     def test_test_only_input_is_not_repurposed_as_training(self):
         data = manifest([{"author_split": "Test-Dev"} for _ in range(8)])
-        result = build_composite_splits(data)
+        result = build_composite_splits(data, split_policy="author_preserved")
         self.assertEqual(len(result["learn"]), 0)
         self.assertEqual(len(result["validate"]), 0)
         self.assertEqual(len(result["test"]), 8)

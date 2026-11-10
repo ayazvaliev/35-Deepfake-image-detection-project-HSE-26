@@ -31,7 +31,7 @@ class AuthorSplitPolicyTests(unittest.TestCase):
 
     def test_three_native_parts_are_kept_exactly(self):
         source = population([('train', 100), ('valid', 30), ('test', 20)])
-        result = build_composite_splits(source)
+        result = build_composite_splits(source, split_policy="author_preserved")
         self.assertEqual([len(result[name]) for name in ['train', 'validate', 'test']], [100, 30, 20])
         self.assertEqual(set(result['validate']['author_split']), {'valid'})
         self.assertEqual(set(result['test']['author_split']), {'test'})
@@ -39,7 +39,7 @@ class AuthorSplitPolicyTests(unittest.TestCase):
 
     def test_train_test_derives_validation_only_from_train(self):
         source = population([('train', 100), ('test', 30)])
-        result = build_composite_splits(source, author_validation_fraction=0.2)
+        result = build_composite_splits(source, author_validation_fraction=0.2, split_policy="author_preserved")
         self.assertEqual([len(result[name]) for name in ['train', 'validate', 'test']], [80, 20, 30])
         self.assertEqual(set(result['validate']['author_split']), {'train'})
         self.assertEqual(set(result['test']['author_split']), {'test'})
@@ -47,7 +47,7 @@ class AuthorSplitPolicyTests(unittest.TestCase):
 
     def test_train_valid_reserves_native_valid_for_final_test(self):
         source = population([('train', 100), ('valid', 30)])
-        result = build_composite_splits(source, author_validation_fraction=0.2)
+        result = build_composite_splits(source, author_validation_fraction=0.2, split_policy="author_preserved")
         self.assertEqual([len(result[name]) for name in ['train', 'validate', 'test']], [80, 20, 30])
         self.assertEqual(set(result['validate']['author_split']), {'train'})
         self.assertEqual(set(result['test']['author_split']), {'valid'})
@@ -55,7 +55,7 @@ class AuthorSplitPolicyTests(unittest.TestCase):
 
     def test_unsplit_data_uses_seventy_fifteen_fifteen(self):
         source = population([('', 1000)])
-        result = build_composite_splits(source)
+        result = build_composite_splits(source, split_policy="author_preserved")
         counts = [len(result[name]) for name in ['train', 'validate', 'test']]
         for actual, expected in zip(counts, [700, 150, 150]):
             self.assertLessEqual(abs(actual - expected), 2)
@@ -63,7 +63,7 @@ class AuthorSplitPolicyTests(unittest.TestCase):
 
     def test_full_inventory_survives_sampling_that_loses_native_validation(self):
         source = population([('train', 100), ('test', 30)], ['train', 'validate', 'test'])
-        result = build_composite_splits(source)
+        result = build_composite_splits(source, split_policy="author_preserved")
         self.assertEqual([len(result[name]) for name in ['train', 'validate', 'test']], [100, 0, 30])
         policy = result['report']['author_split_policies']['source']
         self.assertEqual(policy['basis'], 'inventory')

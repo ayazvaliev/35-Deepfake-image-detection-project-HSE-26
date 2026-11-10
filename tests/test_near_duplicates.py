@@ -89,7 +89,7 @@ class PixelNearDuplicateTests(unittest.TestCase):
         other = self.save("other.png", portrait(alternate=True))
         frame = records([first, copy, other])
         frame["author_split"] = ["train", "test", "train"]
-        result = build_composite_splits(frame)
+        result = build_composite_splits(frame, split_policy="author_preserved")
         audit = result["report"]["near_duplicate_verification"]
         self.assertEqual(audit["candidate_pairs"], 3)
         self.assertEqual(audit["verified_pairs"], 1)

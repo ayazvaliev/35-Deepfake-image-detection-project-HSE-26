@@ -200,6 +200,76 @@ class PlottingSmokeTests(unittest.TestCase):
         self.assertIn("PNG только у fake (лиц: 1)", E.format_target_finding(table))
         self.assertTrue(table.loc[table["source_format"].eq("JPEG"), "only_target"].eq("mixed").all())
 
+    def test_pixel_panels_are_fresh_or_verified_historical_artifacts(self):
+        root = self.directory
+        metadata = root / "data/processed/df40/metadata.parquet"
+        metadata.parent.mkdir(parents=True)
+        self.frame.to_parquet(metadata, index=False)
+        fresh = E.pixel_illustrations(root, self.frame, metadata)
+        self.assertEqual(fresh["mode"], "fresh_pixels")
+        self.assertEqual(fresh["manifest"]["quality_sample_size"], len(self.frame))
+        self.assertIn("чёткость_медиана", fresh["quality_summary_html"])
+        for filename in self.frame["crop_path"].unique():
+            Path(filename).unlink()
+        historical = E.pixel_illustrations(root, self.frame, metadata)
+        self.assertEqual(historical["mode"], "historical_pixel_artifacts")
+        self.assertEqual(historical["quality_summary_html"], fresh["quality_summary_html"])
+        source_snapshot = root / "data/splits/author_baseline/eda_df40_executed.ipynb"
+        source_snapshot.parent.mkdir(parents=True)
+        source_snapshot.write_bytes(b"verified original executed notebook")
+        manifest_path = root / "data/eda_cache/df40/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["source_commit"] = "historical-source"
+        manifest["source_notebook_snapshot"] = str(source_snapshot.relative_to(root))
+        manifest["source_notebook_sha256"] = hashlib.sha256(source_snapshot.read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        self.assertEqual(E.pixel_illustrations(root, self.frame, metadata)["mode"], "historical_pixel_artifacts")
+        original_snapshot = source_snapshot.read_bytes()
+        source_snapshot.write_bytes(b"changed original notebook")
+        with self.assertRaisesRegex(ValueError, "исходного выполненного notebook"):
+            E.pixel_illustrations(root, self.frame, metadata)
+        source_snapshot.write_bytes(original_snapshot)
+        saved = metadata.read_bytes()
+        metadata.write_bytes(b"changed metadata")
+        with self.assertRaisesRegex(ValueError, "другой версии metadata"):
+            E.pixel_illustrations(root, self.frame, metadata)
+        metadata.write_bytes(saved)
+        historical["figure_paths"]["examples"].write_bytes(b"changed figure")
+        with self.assertRaisesRegex(ValueError, "Повреждён"):
+            E.pixel_illustrations(root, self.frame, metadata)
+
+    def test_global_and_conditional_balance_comparison_uses_actual_manifests(self):
+        global_metrics = E.global_split_divergences(self.parts)
+        for feature in ("dataset", "target", "source_format"):
+            values = global_metrics.loc[global_metrics["feature"].eq(feature), "TV"]
+            self.assertTrue(values.eq(0).all())
+        baseline = {name: frame.copy() for name, frame in self.parts.items()}
+        baseline["train"] = baseline["train"].loc[baseline["train"]["target"].eq(1)]
+        comparison = E.balance_before_after(baseline, self.parts)
+        target = comparison.loc[comparison["scope"].eq("global") & comparison["feature"].eq("target")]
+        target = target.set_index("version")
+        self.assertEqual(target.loc["author_baseline", "TV_max"], 0.5)
+        self.assertEqual(target.loc["global_balanced", "TV_max"], 0)
+        self.render(E.plot_global_marginals(self.parts))
+        self.render(E.plot_balance_before_after(comparison))
+
+    def test_df40_loader_uses_retained_inventory_and_image_metadata_after_cleanup(self):
+        root = self.directory / "retained"
+        inventory = root / "data/manifests"
+        processed = root / "data/processed/df40"
+        snapshot = root / "reports/generated/acquisition/df40"
+        for directory in (inventory, processed, snapshot):
+            directory.mkdir(parents=True)
+        self.frame.to_parquet(inventory / "df40_inventory.parquet", index=False)
+        self.frame.to_parquet(processed / "metadata.parquet", index=False)
+        (processed / "preprocessing_audit.json").write_text("{}")
+        (snapshot / "sampling.json").write_text(json.dumps({"seed": 42}))
+        with patch.dict(os.environ, {"DEEPFAKE_DATA_ROOT": str(self.directory / "removed-raw")}):
+            _, sample, faces, sampling, _ = E.load_df40(root)
+        self.assertEqual(set(sample["sample_id"]), set(faces["image_sample_id"]))
+        self.assertEqual(sample.attrs["artifact_source"], "reconstructed_from_processed_image_metadata")
+        self.assertEqual(sampling["seed"], 42)
+
     def test_pixel_verification_audit_keeps_pairs_separate_from_rows(self):
         audit = {"near_duplicate_verification": {
             "mode": "pixel_verification", "candidate_pairs": 11, "verified_pairs": 3,

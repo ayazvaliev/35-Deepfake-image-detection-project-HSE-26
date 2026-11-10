@@ -470,25 +470,50 @@ def _mask_source_coverage(data):
     return coverage.groupby(columns, sort=True, dropna=False).size().reset_index(name="rows").to_dict("records")
 
 
+def _balance_record(column, condition, category, counts, denominators, multilabel=False):
+    partitions = ("train", "validate", "test")
+    shares = {part: counts[part] / denominators[part] if denominators[part] else None for part in partitions}
+    gaps = []
+    for first, second in (("train", "validate"), ("train", "test"), ("validate", "test")):
+        gaps.append(abs(shares[first] - shares[second])
+                    if shares[first] is not None and shares[second] is not None else None)
+    common_support = all(denominators[part] > 0 for part in partitions)
+    return {
+        "feature": column, "condition": condition, "category": category,
+        **{part + "_n": int(counts[part]) for part in partitions},
+        **{part + "_total": int(denominators[part]) for part in partitions},
+        **{part + "_share": shares[part] for part in partitions},
+        "abs_gap": gaps[0], "abs_gap_train_test": gaps[1], "abs_gap_validate_test": gaps[2],
+        "max_pairwise_gap": max(gaps) if common_support else None,
+        "common_support": common_support,
+        "missing_in_partition": any(counts[part] == 0 for part in partitions),
+        "multilabel": multilabel,
+    }
+
+
+def _global_balance(data):
+    partitions = ("train", "validate", "test")
+    kept = data.loc[data["partition"].isin(partitions)]
+    denominators = {part: int(kept["partition"].eq(part).sum()) for part in partitions}
+    records = []
+    for column in ("dataset", "target", "source_format"):
+        if column not in kept:
+            continue
+        counts = {part: kept.loc[kept["partition"].eq(part), column].map(_value).value_counts()
+                  for part in partitions}
+        for category in sorted(set().union(*(set(values.index) for values in counts.values()))):
+            records.append(_balance_record(column, {}, category,
+                           {part: int(counts[part].get(category, 0)) for part in partitions}, denominators))
+    return records
+
+
 def _balance(data):
     records = []
     partitions = ("train", "validate", "test")
     combined = data.loc[data["partition"].isin(partitions)].copy()
 
     def add_record(column, condition, category, counts, denominators, multilabel=False):
-        shares = {part: counts[part] / denominators[part] if denominators[part] else 0.0 for part in partitions}
-        gaps = (abs(shares["train"] - shares["validate"]),
-                abs(shares["train"] - shares["test"]),
-                abs(shares["validate"] - shares["test"]))
-        records.append({
-            "feature": column, "condition": condition, "category": category,
-            **{part + "_n": int(counts[part]) for part in partitions},
-            **{part + "_share": float(shares[part]) for part in partitions},
-            "abs_gap": gaps[0], "abs_gap_train_test": gaps[1],
-            "abs_gap_validate_test": gaps[2], "max_pairwise_gap": max(gaps),
-            "missing_in_partition": any(counts[part] == 0 for part in partitions),
-            "multilabel": multilabel,
-        })
+        records.append(_balance_record(column, condition, category, counts, denominators, multilabel))
 
     for column in _BALANCE_COLUMNS:
         if column not in combined:
@@ -590,7 +615,10 @@ def _author_policies(data):
 def build_composite_splits(frame, validation_fraction=0.15, seed=42,
                            near_duplicate_threshold=4,
                            test_fraction=0.15, author_validation_fraction=0.2,
-                           near_duplicate_verifier=None):
+                           near_duplicate_verifier=None, split_policy="global_balanced",
+                           verified_group_cache=None):
+    if split_policy not in {"global_balanced", "author_preserved"}:
+        raise ValueError("split_policy must be global_balanced or author_preserved")
     if not 0 < validation_fraction < 1 or not 0 < test_fraction < 1:
         raise ValueError("validation_fraction and test_fraction must be between zero and one")
     if validation_fraction + test_fraction >= 1:
@@ -612,19 +640,54 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
     if not normalized["target"].reset_index(drop=True).equals(frame["target"].reset_index(drop=True)):
         raise ValueError("Label normalization must preserve binary targets")
     data = _prepare(normalized)
-    verifier = near_duplicate_verifier if near_duplicate_verifier is not None else PixelNearDuplicateVerifier(data)
-    candidate_pairs = _connect(data, near_duplicate_threshold, verifier=verifier)
-    if isinstance(verifier, PixelNearDuplicateVerifier):
-        verification_report = verifier.report()
-        for index in verifier.unreadable_indices:
-            data.at[index, "flags"].add("near_duplicate_verification_missing")
-            exclusions = _flags(data.at[index, "exclusion_flags"])
-            exclusions.add("near_duplicate_verification_missing")
-            data.at[index, "exclusion_flags"] = sorted(exclusions)
-        data.loc[sorted(verifier.unreadable_indices), "eligible"] = False
-        verifier.close()
+    cache_path = None
+    cache_exists = False
+    if verified_group_cache is not None:
+        from pathlib import Path
+
+        if near_duplicate_verifier is not None:
+            raise ValueError("A verified group cache cannot be combined with an injected verifier")
+        cache_path = Path(verified_group_cache).expanduser().resolve()
+        cache_exists = (cache_path / "manifest.json").is_file()
+        if cache_path.exists() and not cache_path.is_dir():
+            raise ValueError("The verified group cache must be a directory")
+        if cache_path.is_dir() and any(cache_path.iterdir()) and not cache_exists:
+            raise ValueError("Incomplete verified group cache; refusing to overwrite it")
+    if cache_exists:
+        from src.preprocessing.group_cache import load_verified_groups
+
+        group_ids, previous_verification, cache_report = load_verified_groups(
+            data, cache_path, near_duplicate_threshold,
+        )
+        data["group_id"] = group_ids
+        candidate_pairs = int(previous_verification["candidate_pairs"])
+        verification_report = {
+            **previous_verification, "execution_mode": "reused_cache", "verified_now": False,
+        }
     else:
-        verification_report = {"mode": "injected_verifier", "candidate_pairs": candidate_pairs}
+        verifier = near_duplicate_verifier if near_duplicate_verifier is not None else PixelNearDuplicateVerifier(data)
+        candidate_pairs = _connect(data, near_duplicate_threshold, verifier=verifier)
+        if isinstance(verifier, PixelNearDuplicateVerifier):
+            verification_report = verifier.report()
+            for index in verifier.unreadable_indices:
+                data.at[index, "flags"].add("near_duplicate_verification_missing")
+                exclusions = _flags(data.at[index, "exclusion_flags"])
+                exclusions.add("near_duplicate_verification_missing")
+                data.at[index, "exclusion_flags"] = sorted(exclusions)
+            data.loc[sorted(verifier.unreadable_indices), "eligible"] = False
+            verifier.close()
+        else:
+            verification_report = {"mode": "injected_verifier", "candidate_pairs": candidate_pairs}
+        verification_report = {
+            **verification_report, "execution_mode": "verified_now", "verified_now": True,
+        }
+        cache_report = {"reused": False, "verified_now": True}
+        if cache_path is not None:
+            from src.preprocessing.group_cache import write_verified_groups
+
+            cache_report = write_verified_groups(
+                data, cache_path, near_duplicate_threshold, verification_report,
+            )
     initial_ineligible = int((~data["eligible"]).sum())
     nonempty = data.loc[data["eligible"] & data["crop_sha256"].map(_value).ne("")]
     conflicting_hashes = nonempty.groupby("crop_sha256")["target"].nunique()
@@ -637,21 +700,38 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
     for index in conflict_indices:
         data.at[index, "flags"].add("contradictory_duplicate_target")
     data.loc[conflict_indices, "eligible"] = False
-    declared, pinned, scopes, policies = _author_policies(data)
-    priority = {"": 0, "train": 1, "validate": 2, "test": 3}
-    declared_priority = declared.map(priority).where(data["eligible"], 0)
-    group_priority = declared_priority.groupby(data["group_id"]).max()
-    winners = data["group_id"].map(group_priority).map({0: "", 1: "train", 2: "validate", 3: "test"})
-    removed = data.index[data["eligible"] & declared_priority.gt(0) & declared.ne(winners)]
-    boundary_removed = len(removed)
-    for index in removed:
-        data.at[index, "flags"].add("author_split_overlap")
-    data.loc[removed, "eligible"] = False
-    pinned_priority = pinned.map(priority).where(data["eligible"], 0)
-    group_pins = pinned_priority.groupby(data["group_id"]).max()
-    data["partition"] = data["group_id"].map(group_pins).map({0: "", 1: "train", 2: "validate", 3: "test"})
-    validation_groups = set(data.loc[data["eligible"] & scopes.eq("train_validation"), "group_id"])
-    data["split_scope"] = np.where(data["group_id"].isin(validation_groups), "train_validation", "three_way")
+    if split_policy == "global_balanced":
+        data["partition"] = ""
+        data["split_scope"] = "three_way"
+        data["split_policy"] = "global_balanced"
+        boundary_removed = 0
+        policies = {}
+        for dataset, rows in data.groupby("dataset", sort=True):
+            source = set(rows["author_partition"]) - {""}
+            if "author_split_inventory" in rows:
+                for value in rows["author_split_inventory"]:
+                    source.update(_inventory_partitions(value))
+            source.discard("")
+            policies[str(dataset)] = {
+                "policy": "global_balanced", "source_partitions": sorted(source),
+                "basis": "all_eligible_verified_groups", "author_parts_ignored": True,
+            }
+    else:
+        declared, pinned, scopes, policies = _author_policies(data)
+        priority = {"": 0, "train": 1, "validate": 2, "test": 3}
+        declared_priority = declared.map(priority).where(data["eligible"], 0)
+        group_priority = declared_priority.groupby(data["group_id"]).max()
+        winners = data["group_id"].map(group_priority).map({0: "", 1: "train", 2: "validate", 3: "test"})
+        removed = data.index[data["eligible"] & declared_priority.gt(0) & declared.ne(winners)]
+        boundary_removed = len(removed)
+        for index in removed:
+            data.at[index, "flags"].add("author_split_overlap")
+        data.loc[removed, "eligible"] = False
+        pinned_priority = pinned.map(priority).where(data["eligible"], 0)
+        group_pins = pinned_priority.groupby(data["group_id"]).max()
+        data["partition"] = data["group_id"].map(group_pins).map({0: "", 1: "train", 2: "validate", 3: "test"})
+        validation_groups = set(data.loc[data["eligible"] & scopes.eq("train_validation"), "group_id"])
+        data["split_scope"] = np.where(data["group_id"].isin(validation_groups), "train_validation", "three_way")
     remaining = data.loc[data["eligible"] & data["crop_sha256"].map(_value).ne("")]
     remaining = remaining.sort_values("sample_id", kind="stable")
     removed = remaining.index[remaining["crop_sha256"].duplicated(keep="first")]
@@ -680,14 +760,18 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
         raise RuntimeError(f"Leakage survived split construction: {overlap}")
     balance = _balance(data)
     report = {
-        "seed": seed, "requested_validation_fraction": validation_fraction,
+        "seed": seed, "split_policy": split_policy,
+        "author_parts_ignored": split_policy == "global_balanced",
+        "requested_train_fraction": 1 - validation_fraction - test_fraction,
+        "requested_validation_fraction": validation_fraction,
         "requested_test_fraction": test_fraction,
-        "author_train_validation_fraction": author_validation_fraction,
+        "author_train_validation_fraction": author_validation_fraction if split_policy == "author_preserved" else None,
         "author_split_policies": policies,
         "input_rows": len(data), "initially_ineligible": initial_ineligible,
         "label_normalization": normalization_report,
         "df40_lineage_policy": lineage_report,
         "near_duplicate_verification": verification_report,
+        "group_cache": cache_report,
         "quality_policy": data.attrs.get("quality_policy", {}),
         "transformation_balance": "Canonical tag-presence marginals within dataset and target; empty tag lists are tracked as unknown. Multi-label shares use faces as the denominator.",
         "contradictory_crop_rows": len(crop_conflict_indices),
@@ -696,8 +780,11 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
         "author_overlap_removed": boundary_removed,
         "exact_face_duplicates_removed": duplicate_removed,
         "near_duplicate_candidate_pairs": candidate_pairs,
-        "near_duplicate_policy": "Perceptual hashes retrieve candidates only. Exact hashes or high-precision pixel verification establish must-link edges. Unreadable candidate rows are excluded; author holdout boundaries retain priority.",
+        "near_duplicate_policy": "Perceptual hashes retrieve candidates only. Exact hashes or high-precision pixel verification establish must-link edges. Unreadable candidate rows are excluded. Verified groups stay intact under the selected split policy.",
         "overlap_groups": overlap, "balance": balance,
+        "global_balance": _global_balance(data),
+        "max_common_support_gap": max((record["max_pairwise_gap"] for record in balance
+                                       if record["common_support"]), default=None),
         "missing_strata": [record for record in balance if record["missing_in_partition"]],
         "unknown_source_rows": int(data["source_group"].map(_value).eq("").sum()),
         "unknown_identity_rows": int(data["identity_group"].map(_value).eq("").sum()),
@@ -733,6 +820,7 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
         result[partition] = subset
         report[f"{partition}_rows"] = len(subset)
     denominator = max(len(result["train"]) + len(result["validate"]) + len(result["test"]), 1)
+    report["actual_train_fraction"] = len(result["train"]) / denominator
     report["actual_validation_fraction"] = len(result["validate"]) / denominator
     report["actual_test_fraction"] = len(result["test"]) / denominator
     result["report"] = report

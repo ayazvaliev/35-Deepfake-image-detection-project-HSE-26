@@ -107,7 +107,7 @@ class FaceMaskCropBalanceTests(unittest.TestCase):
         records.append({'dataset': 'example', 'sample_id': 'already-excluded', 'target': 0,
                         'source_group': 'already-excluded', 'author_split': 'train',
                         'eligible': False, 'flags': ['earlier_exclusion'], VALUE: 0.25})
-        result = build_composite_splits(pd.DataFrame(records))
+        result = build_composite_splits(pd.DataFrame(records), split_policy="author_preserved")
         for partition in ['train', 'validate', 'test']:
             kept = result[partition]
             self.assertEqual(len(kept), 1)

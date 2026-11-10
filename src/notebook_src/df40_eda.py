@@ -42,10 +42,20 @@ def load_df40(root):
     if not raw_root.is_absolute():
         raw_root = root / raw_root
     raw = raw_root / "df40"
-    inventory = pd.read_parquet(raw / "inventory.parquet")
-    sample = pd.read_parquet(_first([raw / "sample.parquet", raw / "selected.parquet"]))
+    snapshot = root / "reports/generated/acquisition/df40"
+    inventory = pd.read_parquet(_first([raw / "inventory.parquet", root / "data/manifests/df40_inventory.parquet"]))
     faces = pd.read_parquet(root / "data/processed/df40/metadata.parquet")
-    sampling = json.loads(_first([raw / "sampling.json", raw / "metadata/sampling.json"]).read_text())
+    sample_paths = [raw / "sample.parquet", raw / "selected.parquet", snapshot / "sample.parquet"]
+    if any(path.is_file() for path in sample_paths):
+        sample = pd.read_parquet(_first(sample_paths))
+    else:
+        if "image_sample_id" not in faces:
+            raise FileNotFoundError("Нет acquisition sample и image_sample_id для восстановления metadata-выборки")
+        sample = faces.drop_duplicates("image_sample_id").copy()
+        sample["sample_id"] = sample["image_sample_id"]
+        sample.attrs["artifact_source"] = "reconstructed_from_processed_image_metadata"
+    sampling = json.loads(_first([raw / "sampling.json", raw / "metadata/sampling.json",
+                                  snapshot / "sampling.json"]).read_text())
     audit = json.loads((root / "data/processed/df40/preprocessing_audit.json").read_text())
     return inventory, sample, faces, sampling, audit
 
@@ -301,8 +311,8 @@ def plot_flags(faces):
     return fig
 
 
-def load_composite(root):
-    output = root / "data/splits/composite"
+def load_composite(root, relative="data/splits/composite"):
+    output = root / relative
     parts = {partition: pd.read_parquet(output / f"{partition}.parquet")
              for partition in ("train", "validate", "test", "excluded")}
     audit = json.loads((output / "audit.json").read_text())
@@ -902,3 +912,176 @@ def lineage_table(frame):
             "generation_batches_audit_only": group.loc[group["generation_batch"].ne(""), "generation_batch"].nunique(),
         })
     return pd.DataFrame(rows, columns=columns).sort_values("processing_records", ascending=False)
+
+
+def _sha256(path):
+    import hashlib
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def pixel_illustrations(root, faces, metadata_path):
+    cache = root / "data/eda_cache/df40"
+    paths = faces.loc[faces["eligible"].fillna(False), ["input_path", "crop_path"]]
+    pixels_available = len(paths) > 0 and all(
+        value is not None and Path(str(value)).is_file() for value in paths.to_numpy().ravel()
+    )
+    if pixels_available:
+        cache.mkdir(parents=True, exist_ok=True)
+        quality = quality_sample(faces, maximum=3000, seed=42)
+        figures = {
+            "examples": plot_examples(faces, seed=42),
+            "image_properties": plot_image_properties(faces, quality),
+            "source_files": plot_source_files(quality),
+        }
+        artifacts = {}
+        for name, figure in figures.items():
+            path = cache / f"{name}.png"
+            figure.savefig(path, dpi=140)
+            plt.close(figure)
+            artifacts[name] = {"path": path.name, "sha256": _sha256(path)}
+        summary = quality.groupby("target").agg(
+            лиц=("sample_id", "size"), чёткость_медиана=("sharpness_laplacian", "median"),
+            HF_медиана=("hf_ratio", "median"), размер_KiB_медиана=("source_kib", "median"),
+        ).rename(index={0: "real", 1: "fake"})
+        summary_path = cache / "quality_summary.html"
+        summary_path.write_text(summary.to_html())
+        artifacts["quality_summary"] = {"path": summary_path.name, "sha256": _sha256(summary_path)}
+        notebook = root / "notebooks/eda_df40.ipynb"
+        manifest = {
+            "schema_version": 1, "scope": "preprocessing_pixel_illustrations_only",
+            "origin": "computed_from_real_pixels", "metadata_path": str(Path(metadata_path).relative_to(root)),
+            "metadata_sha256": _sha256(metadata_path),
+            "source_notebook_path": "notebooks/eda_df40.ipynb",
+            "source_notebook_sha256": _sha256(notebook) if notebook.is_file() else None,
+            "source_commit": None, "quality_sample_size": len(quality), "seed": 42,
+            "artifacts": artifacts,
+        }
+        (cache / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+        mode = "fresh_pixels"
+    else:
+        manifest_path = cache / "manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError("Нет raw/crop изображений и проверенного pixel-illustration cache")
+        manifest = json.loads(manifest_path.read_text())
+        mode = "historical_pixel_artifacts"
+    if manifest.get("schema_version") != 1 or manifest.get("scope") != "preprocessing_pixel_illustrations_only":
+        raise ValueError("Неизвестный формат pixel-illustration cache")
+    if manifest["metadata_sha256"] != _sha256(metadata_path):
+        raise ValueError("Pixel-illustration cache относится к другой версии metadata")
+    source_commit = manifest.get("source_commit")
+    if source_commit:
+        import hashlib
+        import subprocess
+
+        snapshot_path = manifest.get("source_notebook_snapshot")
+        snapshot = root / snapshot_path if snapshot_path else None
+        if snapshot is not None and snapshot.is_file():
+            saved = snapshot.read_bytes()
+        else:
+            try:
+                saved = subprocess.run(
+                    ["git", "show", f"{source_commit}:{manifest['source_notebook_path']}"],
+                    cwd=root, check=True, capture_output=True,
+                ).stdout
+            except (OSError, subprocess.CalledProcessError) as error:
+                raise ValueError("Нет проверяемого source notebook snapshot или исходного git blob") from error
+        if hashlib.sha256(saved).hexdigest() != manifest["source_notebook_sha256"]:
+            raise ValueError("SHA исходного выполненного notebook не совпадает с provenance")
+    checked = {}
+    for name, artifact in manifest["artifacts"].items():
+        path = cache / artifact["path"]
+        if _sha256(path) != artifact["sha256"]:
+            raise ValueError(f"Повреждён pixel-illustration artifact: {name}")
+        checked[name] = path
+    if not {"examples", "image_properties", "source_files", "quality_summary"} <= checked.keys():
+        raise ValueError("Неполный pixel-illustration cache")
+    return {
+        "mode": mode, "manifest": manifest,
+        "figure_paths": {name: checked[name] for name in ("examples", "image_properties", "source_files")},
+        "quality_summary_html": checked["quality_summary"].read_text(),
+    }
+
+
+def global_split_divergences(parts):
+    features = ("dataset", "target", "generator", "manipulation", "domain", "source_format",
+                "yaw_bin", "pitch_bin", "roll_bin", "light_bin", "face_size_bin",
+                "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin")
+    rows = []
+    for first, second in (("train", "validate"), ("train", "test"), ("validate", "test")):
+        for feature in features:
+            if feature not in parts[first] or feature not in parts[second]:
+                continue
+            left = parts[first][feature].fillna("unknown").astype(str).value_counts()
+            right = parts[second][feature].fillna("unknown").astype(str).value_counts()
+            rows.append({"pair": f"{first} / {second}", "feature": feature,
+                         **divergence(left, right)})
+    return pd.DataFrame(rows, columns=["pair", "feature", "TV", "JS_bits", "max_gap_pp"])
+
+
+def plot_global_marginals(parts):
+    features = ("dataset", "target", "source_format")
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5), layout="constrained")
+    for ax, feature in zip(axes, features):
+        values = {
+            name: frame[feature].fillna("unknown").astype(str).value_counts(normalize=True)
+            for name, frame in parts.items() if name in ("train", "validate", "test")
+        }
+        table = pd.DataFrame(values).fillna(0)
+        table.plot.bar(ax=ax, color=[COLORS[name] for name in table], rot=25)
+        ax.set_title(feature)
+        ax.set_xlabel("")
+        ax.set_ylabel("доля внутри части")
+        ax.legend(title="", frameon=False)
+    fig.suptitle("Глобальные доли источников, классов и исходных форматов", fontsize=16)
+    return fig
+
+
+def balance_before_after(baseline, updated):
+    rows = []
+    for name, parts in (("author_baseline", baseline), ("global_balanced", updated)):
+        global_table = global_split_divergences(parts)
+        conditional = split_divergences(parts)
+        for scope, table in (("global", global_table), ("conditional", conditional)):
+            for feature, values in table.groupby("feature"):
+                measured = values["TV"].dropna()
+                rows.append({
+                    "version": name, "scope": scope, "feature": feature,
+                    "comparisons": len(measured),
+                    "TV_mean": measured.mean(), "TV_max": measured.max(),
+                    "max_gap_pp": values["max_gap_pp"].max(),
+                })
+    return pd.DataFrame(rows)
+
+
+def plot_balance_before_after(table):
+    features = ("dataset", "target", "generator", "domain", "source_format",
+                "face_size_bin", "source_resolution_bin", "yaw_bin", "light_bin",
+                "face_mask_fraction_of_crop_bin")
+    fig, axes = plt.subplots(1, 2, figsize=(17, 8), layout="constrained")
+    for ax, scope, title in zip(axes, ("global", "conditional"),
+                                ("Глобальные маргинальные доли", "Условные распределения")):
+        subset = table.loc[table["scope"].eq(scope) & table["feature"].isin(features)]
+        pivot = subset.pivot(index="feature", columns="version", values="TV_max")
+        pivot = pivot.reindex([feature for feature in features if feature in pivot.index])
+        positions = np.arange(len(pivot))
+        for version, color, label, marker in (
+                ("author_baseline", "#A3A9B5", "авторские части", "s"),
+                ("global_balanced", COLORS["train"], "global 70/15/15", "o")):
+            if version in pivot:
+                ax.scatter(pivot[version], positions, s=70, color=color, label=label, marker=marker)
+        if {"author_baseline", "global_balanced"} <= set(pivot):
+            for position, row in enumerate(pivot.to_dict("records")):
+                if pd.notna(row["author_baseline"]) and pd.notna(row["global_balanced"]):
+                    ax.plot([row["author_baseline"], row["global_balanced"]], [position, position],
+                            color="#CBD5E1", zorder=0)
+        ax.set_yticks(positions, pivot.index)
+        ax.set_xlabel("максимальный TV между частями")
+        ax.set_title(title)
+        ax.legend(frameon=False)
+    fig.suptitle("Как новый split изменил расхождения распределений", fontsize=16)
+    return fig

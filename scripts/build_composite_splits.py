@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--manifest", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--group-cache", type=Path)
+    parser.add_argument("--split-policy", choices=("global_balanced", "author_preserved"))
     parser.add_argument("--validation-fraction", type=float)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--test-fraction", type=float)
@@ -57,6 +59,7 @@ def main():
 
         config = yaml.safe_load(args.config.read_text()) or {}
         config = config.get("splits", config)
+    split_policy = args.split_policy or config.get("policy", "global_balanced")
     validation_fraction = args.validation_fraction if args.validation_fraction is not None else config.get("validation_fraction", 0.15)
     test_fraction = args.test_fraction if args.test_fraction is not None else config.get("test_fraction", 0.15)
     author_validation_fraction = args.author_validation_fraction if args.author_validation_fraction is not None else config.get("author_validation_fraction", 0.2)
@@ -67,7 +70,8 @@ def main():
     cv2.setNumThreads(1)
     result = build_composite_splits(data, validation_fraction=validation_fraction, seed=seed,
                                     near_duplicate_threshold=threshold,
-                                    test_fraction=test_fraction, author_validation_fraction=author_validation_fraction)
+                                    test_fraction=test_fraction, author_validation_fraction=author_validation_fraction,
+                                    split_policy=split_policy, verified_group_cache=args.group_cache)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     for partition in ("train", "validate", "test", "excluded"):
@@ -79,7 +83,7 @@ def main():
     pd.DataFrame(report["balance"]).to_json(output / "balance.json", orient="records", force_ascii=False, indent=2)
     print(json.dumps({key: report[key] for key in ("train_rows", "validate_rows", "test_rows", "excluded_rows", "ready_for_training")}))
     if not report["ready_for_training"] and not args.allow_empty:
-        print("Empty train, validation or test partition. Supply the required source partitions or explicitly use --allow-empty for an audit-only run.", file=sys.stderr)
+        print("Empty train, validation or test partition. Supply enough independent eligible groups or explicitly use --allow-empty for an audit-only run.", file=sys.stderr)
         return 2
     return 0
 

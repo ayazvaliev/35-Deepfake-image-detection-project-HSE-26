@@ -11,4 +11,4 @@ for dataset in 140k openforensics mffi; do
     python scripts/index_datasets.py --dataset "$dataset" --limit 20000 --seed 42 --output "data/processed/manifests/$dataset.jsonl"
     python scripts/preprocess.py --manifest "data/processed/manifests/$dataset.jsonl" --output-dir "data/processed/$dataset" --workers "$workers" --crop-policy adaptive
 done
-python scripts/build_composite_splits.py --manifest data/processed/df40/metadata.parquet data/processed/140k/metadata.parquet data/processed/openforensics/metadata.parquet data/processed/mffi/metadata.parquet --config configs/composite.yml --output data/splits/composite
+python scripts/build_composite_splits.py --manifest data/processed/df40/metadata.parquet data/processed/140k/metadata.parquet data/processed/openforensics/metadata.parquet data/processed/mffi/metadata.parquet --config configs/composite.yml --output data/splits/composite --group-cache data/processed/verified_groups

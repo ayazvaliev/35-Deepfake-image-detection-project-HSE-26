@@ -40,6 +40,8 @@ def matched_face_conflicts(frame, min_iou=0.8):
         if column not in candidates:
             continue
         known = candidates.loc[candidates[column].notna() & candidates[column].astype(str).ne('')]
+        repeated = known[column].value_counts()
+        known = known.loc[known[column].isin(repeated.index[repeated.gt(1)])]
         for _, group in known.groupby(column, sort=False):
             if group['dataset'].astype(str).str.lower().nunique() < 2 or group['target'].nunique() < 2:
                 continue
