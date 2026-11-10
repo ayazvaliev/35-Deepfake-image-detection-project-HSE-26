@@ -27,6 +27,10 @@ MODELS = {
         'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
         '64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff'),
 }
+BASELINE_MODELS = {
+    'resnet18-f37072fd.pth': ('https://download.pytorch.org/models/resnet18-f37072fd.pth',
+        'f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec'),
+}
 ZENODO = 'https://zenodo.org/records/5528418/files/'
 MODELSCOPE = 'https://www.modelscope.cn/api/v1/datasets/DDLteam/MFFI/repo?Revision=fd9fce422da6ff231906dc06e984674f2332919a&FilePath='
 
@@ -420,9 +424,12 @@ def mffi(limit, seed, include_test=True, test_only=False):
     archive.unlink()
 
 
-def models():
+def models(include_baseline=False):
+    selected = dict(MODELS)
+    if include_baseline:
+        selected.update(BASELINE_MODELS)
     provenance = {}
-    for name, (url, checksum) in MODELS.items():
+    for name, (url, checksum) in selected.items():
         path = download(url, ROOT / 'models' / name, checksum)
         provenance[name] = {'source': url, 'sha256': file_hash(path), 'bytes': path.stat().st_size}
     (ROOT / 'models' / 'provenance.json').write_text(json.dumps(provenance, indent=2))
@@ -432,22 +439,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('kind', choices=['models', 'datasets'])
     parser.add_argument('--datasets', nargs='+', default=['140k', 'openforensics', 'mffi'],
-                        choices=['140k', 'openforensics', 'mffi'])
+                        choices=['140k', 'openforensics', 'openforensics_crops', 'mffi'])
     parser.add_argument('--limit', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--skip-test', action='store_true')
     parser.add_argument('--mffi-test-only', action='store_true')
+    parser.add_argument('--include-baseline', action='store_true')
     args = parser.parse_args()
     if args.limit < 1:
         parser.error('--limit must be positive')
     if args.mffi_test_only and args.skip_test:
         parser.error('--mffi-test-only cannot be combined with --skip-test')
     if args.kind == 'models':
-        models()
+        models(args.include_baseline)
         return
     for dataset in args.datasets:
         if dataset == '140k':
             kaggle_dataset('xhlulu/140k-real-and-fake-faces', '140k')
+        elif dataset == 'openforensics_crops':
+            kaggle_dataset('manjilkarki/deepfake-and-real-images', 'openforensics_crops')
         elif dataset == 'openforensics':
             openforensics(args.limit, args.seed)
         elif dataset == 'mffi':

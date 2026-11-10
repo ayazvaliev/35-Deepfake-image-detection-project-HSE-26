@@ -34,4 +34,5 @@ condarc=$(mktemp)
 trap 'rm -f "$condarc"' EXIT
 printf "channels:\n  - conda-forge\ndefault_channels: []\n" > "$condarc"
 CONDA_NO_PLUGINS=true CONDA_SOLVER=classic CONDARC="$condarc" "$conda_root/bin/conda" env update -f environment.yml
-"$conda_root/bin/conda" run -n deepfake-preprocessing python -m pip check
+"$conda_root/bin/conda" run -n deepfake python -m pip check
+"$conda_root/bin/conda" run -n deepfake python -m ipykernel install --user --name deepfake --display-name 'Python (deepfake)'
