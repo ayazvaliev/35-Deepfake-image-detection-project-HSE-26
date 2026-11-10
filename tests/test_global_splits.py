@@ -57,7 +57,7 @@ class GlobalBalancedSplitTests(unittest.TestCase):
         for partition in ("train", "validate", "test"):
             self.assertEqual(set(result[partition]["author_split"]), {"train", "valid", "test"})
         global_rows = result["report"]["global_balance"]
-        self.assertEqual({row["feature"] for row in global_rows}, {"dataset", "target", "source_format"})
+        self.assertEqual({row["feature"] for row in global_rows}, {"dataset", "target", "source_format", "source_jpeg_quality_level", "source_jpeg_quality_bin", "source_jpeg_subsampling"})
         self.assertLessEqual(max(row["max_pairwise_gap"] for row in global_rows), 0.02)
 
     def test_groups_crossing_author_boundaries_stay_intact_without_author_purges(self):

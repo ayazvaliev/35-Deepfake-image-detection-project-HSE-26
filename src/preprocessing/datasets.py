@@ -25,6 +25,49 @@ def sample_manifest(frame, limit, strata=None, seed=42):
     return proportional_sample(frame, min(limit, len(frame)), strata=strata, seed=seed)
 
 
+def index_df40(root=None):
+    from src.preprocessing.df40 import FORMATS, METHODS
+
+    root = Path(root or RAW / 'df40')
+    sample = root / 'sample.parquet'
+    if not sample.is_file():
+        raise FileNotFoundError(f'Acquired DF40 sample missing: {sample}; run scripts/download_df40.py first')
+    frame = pd.read_parquet(sample)
+    required = {'dataset', 'sample_id', 'path', 'target', 'native_method'}
+    missing = required - set(frame)
+    if missing:
+        raise ValueError(f'DF40 acquired image columns missing: {sorted(missing)}')
+    if frame.empty:
+        raise ValueError('DF40 acquired image sample is empty')
+    if not frame['dataset'].astype(str).str.casefold().eq('df40').all():
+        raise ValueError('DF40 acquired sample contains another dataset')
+    if not frame['target'].isin([0, 1]).all():
+        raise ValueError('DF40 acquired sample requires binary targets 0/1')
+    identifiers = frame['sample_id'].map(lambda value: isinstance(value, str) and bool(value.strip()))
+    if not identifiers.all() or frame['sample_id'].duplicated().any():
+        raise ValueError('DF40 image sample_id values must be nonempty and unique')
+    paths = frame['path'].map(
+        lambda value: isinstance(value, str) and bool(value.strip())
+        and Path(value).suffix.lower() in FORMATS
+    )
+    if not paths.all():
+        raise ValueError('DF40 acquired sample must contain native image paths, not videos')
+    if 'face_index' in frame and frame['face_index'].notna().any():
+        raise ValueError('DF40 indexing requires native image rows, not processed face rows')
+    families = {method.casefold(): specification[0] for method, specification in METHODS.items()}
+    family = frame['native_method'].astype(str).str.casefold().map(families)
+    if family.isna().any():
+        raise ValueError('DF40 sample contains a method outside native EFS/FE')
+    if 'native_family' in frame and not frame['native_family'].astype(str).str.upper().eq(family).all():
+        raise ValueError('DF40 native_family does not match its native method')
+    if 'manipulation' in frame:
+        expected = family.where(frame['target'].eq(1), 'REAL')
+        if not frame['manipulation'].astype(str).str.upper().eq(expected).all():
+            raise ValueError('DF40 manipulation must preserve EFS/FE for fake and real for genuine images')
+    return frame
+
+
+
 def index_140k(root=None):
     root = Path(root or RAW / '140k')
     records = []

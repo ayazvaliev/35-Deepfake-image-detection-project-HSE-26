@@ -110,6 +110,87 @@ class PixelNearDuplicateTests(unittest.TestCase):
         self.assertIn("near_duplicate_verification_missing", excluded["exclusion_flags"])
         self.assertEqual(sum(len(result[name]) for name in ("train", "validate", "test")), 1)
 
+    def test_original_proxy_preserves_identical_comparison_pixels_and_decisions_after_raw_cleanup(self):
+        from src.preprocessing.verification_views import save_original_verification_view
+
+        image = cv2.resize(portrait(), (512, 384), interpolation=cv2.INTER_CUBIC)
+        original = self.save("large-original.png", image)
+        duplicate = self.save("large-copy.jpg", image, quality=95)
+        crops = [self.save("different-crop-a.png", portrait()),
+                 self.save("different-crop-b.png", portrait(alternate=True))]
+        frame = records(crops)
+        frame["input_path"] = [str(original), str(duplicate)]
+        for index, path in enumerate((original, duplicate)):
+            source = cv2.imread(str(path))
+            metadata = save_original_verification_view(source, path.read_bytes(), self.root / "original-proxies")
+            for column, value in metadata.items():
+                if column not in frame:
+                    frame[column] = None
+                frame.at[index, column] = value
+        before = PixelNearDuplicateVerifier(frame)
+        self.addCleanup(before.close)
+        self.assertTrue(before(0, 1))
+        raw_views = [before._view(str(path)) for path in (original, duplicate)]
+        original.unlink()
+        duplicate.unlink()
+        after = PixelNearDuplicateVerifier(frame)
+        self.addCleanup(after.close)
+        self.assertTrue(after(0, 1))
+        self.assertEqual(after.report()["verified_original_proxy_pairs"], 1)
+        for index in (0, 1):
+            proxy, used, invalid = after._row_view(index, after.rows[index], "original")
+            self.assertTrue(used)
+            self.assertFalse(invalid)
+            np.testing.assert_array_equal(proxy[0], raw_views[index][0])
+            self.assertEqual(proxy[1:], raw_views[index][1:])
+
+    def test_crop_proxy_is_pixel_identical_and_tampering_is_excluded(self):
+        from src.preprocessing.verification_views import save_crop_verification_view
+
+        paths = [self.save("crop-original.png", portrait()), self.save("crop-jpeg.jpg", portrait(), quality=85)]
+        frame = records(paths)
+        for index, path in enumerate(paths):
+            metadata = save_crop_verification_view(cv2.imread(str(path)), self.root / "crop-proxies")
+            for column, value in metadata.items():
+                if column not in frame:
+                    frame[column] = None
+                frame.at[index, column] = value
+            path.unlink()
+        verifier = PixelNearDuplicateVerifier(frame)
+        self.addCleanup(verifier.close)
+        self.assertTrue(verifier(0, 1))
+        self.assertEqual(verifier.report()["verified_crop_proxy_pairs"], 1)
+        Path(frame.at[0, "crop_verification_path"]).write_bytes(b"tampered")
+        result = build_composite_splits(frame)
+        audit = result["report"]["near_duplicate_verification"]
+        self.assertEqual(audit["unreadable_pairs"], 1)
+        self.assertEqual(audit["proxy_integrity_failures"], 1)
+        self.assertIn("near_duplicate_verification_missing", result["excluded"].iloc[0]["flags"])
+
+    def test_proxy_retains_original_aspect_ratio_gate_instead_of_treating_views_as_square(self):
+        from src.preprocessing.verification_views import save_original_verification_view
+
+        originals = [self.save("square.png", portrait()),
+                     self.save("wide.png", cv2.resize(portrait(), (384, 256)))]
+        crops = [self.save("aspect-crop-a.png", portrait()), self.save("aspect-crop-b.png", portrait(alternate=True))]
+        frame = records(crops)
+        frame["input_path"] = [str(path) for path in originals]
+        for index, path in enumerate(originals):
+            metadata = save_original_verification_view(cv2.imread(str(path)), path.read_bytes(), self.root / "aspect-proxies")
+            for column, value in metadata.items():
+                if column not in frame:
+                    frame[column] = None
+                frame.at[index, column] = value
+        before = PixelNearDuplicateVerifier(frame)
+        self.addCleanup(before.close)
+        self.assertFalse(before(0, 1))
+        for path in originals:
+            path.unlink()
+        after = PixelNearDuplicateVerifier(frame)
+        self.addCleanup(after.close)
+        self.assertFalse(after(0, 1))
+        self.assertEqual(after.report()["unreadable_pairs"], 0)
+
     def test_exact_sha_evidence_remains_valid_without_pixel_reads(self):
         verifier = PixelNearDuplicateVerifier(records(["absent-a", "absent-b"], decoded_sha256="verified-exact-source"))
         self.addCleanup(verifier.close)

@@ -22,3 +22,5 @@ reports/generated/
 
 logs/
 results/
+
+data/group_cache/

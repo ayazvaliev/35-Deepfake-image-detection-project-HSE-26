@@ -97,7 +97,7 @@ def _process_task(key, record):
     for index, row in enumerate(rows):
         row["image_sample_id"] = str(record["sample_id"])
         row["sample_id"] = f"{record['sample_id']}:face-{row.get('face_index', index)}"
-        if row.get("crop_path"):
+        if row.get("crop_path") and Path(row["crop_path"]).is_file():
             row["crop_file_sha256"] = _sha256(row["crop_path"])
     return key, _native(rows)
 
@@ -110,7 +110,22 @@ def _cached_rows(connection, key):
     for row in rows:
         path = row.get("crop_path")
         if path:
-            if not Path(path).is_file() or _sha256(path) != row.get("crop_file_sha256"):
+            if Path(path).is_file():
+                if _sha256(path) != row.get("crop_file_sha256"):
+                    return None
+            elif row.get("training_crop_removed") and row.get("crop_verification_path"):
+                from src.preprocessing.verification_views import read_verification_view
+
+                try:
+                    for prefix in ("crop", "original"):
+                        read_verification_view(
+                            row[prefix + "_verification_path"], row[prefix + "_verification_sha256"],
+                            row[prefix + "_verification_pixel_sha256"], row[prefix + "_verification_size"],
+                            row[prefix + "_verification_codec"],
+                        )
+                except (OSError, ValueError, KeyError):
+                    return None
+            else:
                 return None
     return rows
 
@@ -195,11 +210,15 @@ def run(args):
         "landmarker_model": str(args.landmarker_model.resolve()),
         "size": args.size, "expansion": args.expansion, "crop_policy": args.crop_policy,
         "min_face_size": args.min_face_size, "detection_threshold": args.detection_threshold,
+        "compact_verification_crops": args.compact_verification_crops,
     }
     model_hashes = {key: _sha256(settings[key]) for key in ("yunet_model", "landmarker_model")}
     provenance = {
         "settings": settings, "model_sha256": model_hashes,
         "preprocessor_source_sha256": _sha256(ROOT / "src/preprocessing/faces.py"),
+        "jpeg_source_sha256": _sha256(ROOT / "src/preprocessing/jpeg.py"),
+        "verification_views_source_sha256": _sha256(ROOT / "src/preprocessing/verification_views.py"),
+        "source_crops_source_sha256": _sha256(ROOT / "src/preprocessing/source_crops.py"),
         "runner_source_sha256": _sha256(Path(__file__)),
     }
     fingerprint = hashlib.sha256(_json(provenance).encode()).hexdigest()
@@ -280,6 +299,7 @@ def main():
     parser.add_argument("--yunet-model", type=Path, default=ROOT / "models/face_detection_yunet_2023mar.onnx")
     parser.add_argument("--landmarker-model", type=Path, default=ROOT / "models/face_landmarker.task")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--compact-verification-crops", action="store_true")
     parser.add_argument("--size", type=int, default=256)
     parser.add_argument("--expansion", type=float, default=1.3)
     parser.add_argument("--crop-policy", choices=("adaptive", "padded"), default="adaptive")

@@ -11,6 +11,8 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[2]
+VERIFIED_GROUP_CACHE_SCHEMA_VERSION = 1
+VERSIONED_CACHE_KEY_SCHEMA_VERSION = 1
 POST_GROUP_FLAGS = frozenset({
     "author_split_overlap", "exact_face_duplicate",
     "contradictory_duplicate_target", "near_duplicate_verification_missing",
@@ -20,7 +22,11 @@ SIGNATURE_COLUMNS = (
     "image_sha256", "decoded_sha256", "crop_sha256", "crop_file_sha256", "download_sha256",
     "file_sha256", "phash", "face_mask_fraction_of_crop", "mask_source",
     "source_group_basis", "source_group_policy_version", "lineage_status",
-    "flags", "exclusion_flags",
+    "flags", "exclusion_flags", "original_verification_path", "original_verification_sha256",
+    "original_verification_pixel_sha256", "original_verification_codec", "original_verification_size",
+    "original_verification_policy_version", "original_verification_storage_policy", "original_aspect_ratio", "crop_verification_path",
+    "crop_verification_sha256", "crop_verification_pixel_sha256", "crop_verification_codec",
+    "crop_verification_size", "crop_verification_policy_version", "training_crop_removed",
 )
 _LOGIC = {
     "src/preprocessing/splits.py": (
@@ -33,6 +39,15 @@ _LOGIC = {
     ),
     "src/preprocessing/quality.py": (
         "apply_quality_policy", "_flags", "MASK_FRACTION_COLUMN", "MASK_QUALITY_FLAGS",
+    ),
+    "src/preprocessing/source_crops.py": (
+        "SOURCE_CROP_VERSION", "_pixel_sha256", "_decode_source", "_source_pixels",
+        "reconstruct_source_crop", "_descriptor_crop", "save_source_crop", "read_source_crop",
+    ),
+    "src/preprocessing/verification_views.py": (
+        "normalized_original_view", "view_pixel_sha256", "read_verification_view",
+        "save_original_verification_view", "save_crop_verification_view", "_lossless_encoding", "_write_view",
+        "ORIGINAL_VERIFICATION_SIZE", "VERIFICATION_VIEW_VERSION",
     ),
     "src/preprocessing/near_duplicates.py": (
         "PixelNearDuplicateVerifier", "structural_similarity", "_text",
@@ -151,6 +166,41 @@ def _verification_settings(audit):
     return {key: value for key, value in audit["settings"].items() if key not in {"opencv_threads", "cache_size"}}
 
 
+def versioned_cache_path(data, cache_root, near_duplicate_threshold, verifier_settings=None):
+    from src.preprocessing.near_duplicates import PixelNearDuplicateVerifier
+
+    if not isinstance(near_duplicate_threshold, int) or not 0 <= near_duplicate_threshold <= 16:
+        raise ValueError("near_duplicate_threshold must be an integer from zero to sixteen")
+    root = Path(cache_root).expanduser().resolve()
+    if root.exists() and not root.is_dir():
+        raise ValueError("The versioned group cache root must be a directory")
+    if verifier_settings is None:
+        verifier = PixelNearDuplicateVerifier(pd.DataFrame())
+        verifier_settings = verifier.settings
+        verifier.close()
+    settings = {key: value for key, value in verifier_settings.items()
+                if key not in {"opencv_threads", "cache_size"}}
+    input_digest = _records_digest(_row_table(data))
+    fingerprints = grouping_fingerprints()
+    payload = {
+        "key_schema_version": VERSIONED_CACHE_KEY_SCHEMA_VERSION,
+        "signature_schema_version": VERIFIED_GROUP_CACHE_SCHEMA_VERSION,
+        "signature_columns": list(SIGNATURE_COLUMNS),
+        "input_digest": input_digest, "logic_fingerprints": fingerprints,
+        "near_duplicate_threshold": near_duplicate_threshold,
+        "verification_settings": settings,
+    }
+    key = hashlib.sha256(_json(payload).encode()).hexdigest()
+    destination = root / f"v{VERSIONED_CACHE_KEY_SCHEMA_VERSION}_{key}"
+    return destination, {
+        "policy": "versioned", "cache_root": str(root), "cache_key": key,
+        "cache_key_schema_version": VERSIONED_CACHE_KEY_SCHEMA_VERSION,
+        "resolved_cache_path": str(destination), "key_input_digest": input_digest,
+        "key_logic_fingerprints_sha256": hashlib.sha256(_json(fingerprints).encode()).hexdigest(),
+        "key_verification_settings": settings,
+    }
+
+
 def _validate_verification(audit):
     from src.preprocessing.near_duplicates import PixelNearDuplicateVerifier
 
@@ -236,7 +286,7 @@ def write_verified_groups(data, path, near_duplicate_threshold, verification_aud
     temporary.replace(destination)
     origin = {"origin": "fresh_pixel_verification"} if provenance is None else dict(provenance)
     manifest = {
-        "schema_version": 1,
+        "schema_version": VERIFIED_GROUP_CACHE_SCHEMA_VERSION,
         "signature_columns": list(SIGNATURE_COLUMNS),
         "rows": len(table), "groups": int(table["group_id"].nunique()),
         "input_digest": _records_digest(table),
@@ -259,7 +309,7 @@ def load_verified_groups(data, path, near_duplicate_threshold):
     manifest = json.loads((path / "manifest.json").read_text())
     if manifest.get("manifest_sha256") != _seal(manifest):
         raise ValueError("Verified-group cache manifest integrity mismatch")
-    if manifest.get("schema_version") != 1 or manifest.get("signature_columns") != list(SIGNATURE_COLUMNS):
+    if manifest.get("schema_version") != VERIFIED_GROUP_CACHE_SCHEMA_VERSION or manifest.get("signature_columns") != list(SIGNATURE_COLUMNS):
         raise ValueError("Unsupported verified-group cache signature schema")
     if manifest["near_duplicate_threshold"] != near_duplicate_threshold:
         raise ValueError("Verified-group cache near-duplicate threshold mismatch")

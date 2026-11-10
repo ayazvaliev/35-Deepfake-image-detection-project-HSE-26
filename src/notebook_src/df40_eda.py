@@ -44,7 +44,9 @@ def load_df40(root):
     raw = raw_root / "df40"
     snapshot = root / "reports/generated/acquisition/df40"
     inventory = pd.read_parquet(_first([raw / "inventory.parquet", root / "data/manifests/df40_inventory.parquet"]))
-    faces = pd.read_parquet(root / "data/processed/df40/metadata.parquet")
+    processed = _first([root / "data/processed/full/df40/metadata.parquet",
+                        root / "data/processed/df40/metadata.parquet"])
+    faces = pd.read_parquet(processed)
     sample_paths = [raw / "sample.parquet", raw / "selected.parquet", snapshot / "sample.parquet"]
     if any(path.is_file() for path in sample_paths):
         sample = pd.read_parquet(_first(sample_paths))
@@ -56,7 +58,7 @@ def load_df40(root):
         sample.attrs["artifact_source"] = "reconstructed_from_processed_image_metadata"
     sampling = json.loads(_first([raw / "sampling.json", raw / "metadata/sampling.json",
                                   snapshot / "sampling.json"]).read_text())
-    audit = json.loads((root / "data/processed/df40/preprocessing_audit.json").read_text())
+    audit = json.loads((processed.parent / "preprocessing_audit.json").read_text())
     return inventory, sample, faces, sampling, audit
 
 
@@ -117,10 +119,10 @@ def plot_sampling(inventory, sample):
         q = sample[column].fillna("unknown").astype(str).value_counts(normalize=True)
         order = p.sort_values().index
         y = np.arange(len(order))
-        ax.barh(y - 0.18, 100 * p.reindex(order, fill_value=0), height=0.34, color="#B3C4DB", label="инвентарь")
-        ax.barh(y + 0.18, 100 * q.reindex(order, fill_value=0), height=0.34, color=COLORS["train"], label="сабсет")
+        ax.barh(y - 0.18, p.reindex(order, fill_value=0), height=0.34, color="#B3C4DB", label="инвентарь")
+        ax.barh(y + 0.18, q.reindex(order, fill_value=0), height=0.34, color=COLORS["train"], label="сабсет")
         ax.set_yticks(y, order)
-        ax.set_xlabel("доля изображений, %")
+        ax.set_xlabel("доля изображений внутри инвентаря / сабсета")
         ax.set_title(column)
         ax.legend(frameon=False, fontsize=8)
     for ax in axes.ravel()[len(columns):]:
@@ -139,10 +141,10 @@ def plot_composition(frame):
     else:
         fig, axes = plt.subplots(1, 3, figsize=(16, 4.8), layout="constrained")
     for ax, column in zip(np.asarray(axes).ravel(), columns):
-        table = pd.crosstab(frame[column].fillna("unknown"), frame["class"]).reindex(columns=["real", "fake"], fill_value=0)
-        table.plot.bar(ax=ax, stacked=True, color=[COLORS["real"], COLORS["fake"]], width=0.7, rot=0)
+        table = pd.crosstab(frame[column].fillna("unknown"), frame["class"], normalize="columns").reindex(columns=["real", "fake"], fill_value=0)
+        table.plot.bar(ax=ax, color=[COLORS["real"], COLORS["fake"]], width=0.7, rot=0)
         ax.set_title(column)
-        ax.set_ylabel("изображений")
+        ax.set_ylabel("доля внутри класса")
         ax.set_xlabel("")
         ax.legend(title="", frameon=False)
         ax.ticklabel_format(axis="y", style="plain")
@@ -168,7 +170,7 @@ def plot_examples(faces, seed=42):
     fig, axes = plt.subplots(2, len(selected), figsize=(3.2 * len(selected), 6.8), squeeze=False, layout="constrained")
     for column, row in enumerate(selected):
         raw = cv2.imread(str(row["input_path"]))
-        crop = cv2.imread(str(row["crop_path"]))
+        crop = _read_crop(row)
         if raw is None or crop is None:
             raise FileNotFoundError(f"Cannot decode example {row['sample_id']}")
         axes[0, column].imshow(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
@@ -191,7 +193,7 @@ def quality_sample(faces, maximum=3000, seed=42):
     selected = eligible.sample(min(maximum, len(eligible)), random_state=seed)
     rows = []
     for row in selected.to_dict("records"):
-        image = cv2.imread(str(row["crop_path"]))
+        image = _read_crop(row)
         if image is None:
             raise FileNotFoundError(row["crop_path"])
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -201,40 +203,48 @@ def quality_sample(faces, maximum=3000, seed=42):
         energy = np.abs(np.fft.fftshift(np.fft.fft2(gray_small - gray_small.mean()))) ** 2
         y, x = np.ogrid[-side // 2:side // 2, -side // 2:side // 2]
         high = np.sqrt(x * x + y * y) >= side / 3
+        source = Path(row["input_path"])
+        source_bytes = source.stat().st_size if source.is_file() else row.get("file_size")
+        if source_bytes is None or source_bytes is pd.NA or not np.isfinite(float(source_bytes)) or float(source_bytes) < 0:
+            raise ValueError("Original source file_size is unavailable: " + str(row["sample_id"]))
         rows.append({"sample_id": row["sample_id"], "target": row["target"],
                      "sharpness_laplacian": laplacian, "hf_ratio": float(energy[high].sum() / max(energy.sum(), 1)),
-                     "source_kib": Path(row["input_path"]).stat().st_size / 1024})
+                     "source_kib": float(source_bytes) / 1024})
     return pd.DataFrame(rows, columns=["sample_id", "target", "sharpness_laplacian", "hf_ratio", "source_kib"])
 
 
 def plot_image_properties(faces, quality):
     images = labels(image_table(faces))
     fig, axes = plt.subplots(2, 3, figsize=(16, 9), layout="constrained")
+    width_edges = _hist_edges(images.get("image_width", pd.Series(dtype=float)), 35)
+    height_edges = _hist_edges(images.get("image_height", pd.Series(dtype=float)), 35)
     for target, name in ((0, "real"), (1, "fake")):
         selected = images.loc[images["target"].eq(target)]
         if "image_width" in selected:
-            axes[0, 0].hist(selected["image_width"].dropna(), bins=35, alpha=0.55, color=COLORS[name], label=name)
+            axes[0, 0].hist(selected["image_width"].dropna(), bins=width_edges, density=True, alpha=0.55, color=COLORS[name], label=name)
         if "image_height" in selected:
-            axes[0, 1].hist(selected["image_height"].dropna(), bins=35, alpha=0.55, color=COLORS[name], label=name)
-    table = pd.crosstab(images["source_format"], images["class"]).reindex(columns=["real", "fake"], fill_value=0)
+            axes[0, 1].hist(selected["image_height"].dropna(), bins=height_edges, density=True, alpha=0.55, color=COLORS[name], label=name)
+    table = pd.crosstab(images["source_format"], images["class"], normalize="columns").reindex(columns=["real", "fake"], fill_value=0)
     table.plot.bar(ax=axes[0, 2], color=[COLORS["real"], COLORS["fake"]], rot=25)
     axes[0, 0].set_title("Ширина исходника")
     axes[0, 1].set_title("Высота исходника")
     axes[0, 2].set_title("Формат по заголовку исходника")
     for ax in axes[0, :2]:
         ax.set_xlabel("px")
-        ax.set_ylabel("изображений")
+        ax.set_ylabel("плотность внутри класса")
         if ax.get_legend_handles_labels()[0]:
             ax.legend(frameon=False)
     axes[0, 2].set_xlabel("")
-    axes[0, 2].set_ylabel("изображений")
+    axes[0, 2].set_ylabel("доля внутри класса")
     axes[0, 2].legend(title="", frameon=False)
     for ax, column, title in zip(axes[1, :2], ("sharpness_laplacian", "hf_ratio"), ("Чёткость: дисперсия Лапласиана", "Доля высоких частот")):
+        pooled = quality[column] if column != "sharpness_laplacian" else np.log1p(quality[column])
+        edges = _hist_edges(pooled, 35)
         for target, name in ((0, "real"), (1, "fake")):
             values = quality.loc[quality["target"].eq(target), column].dropna()
             if column == "sharpness_laplacian":
                 values = np.log1p(values)
-            ax.hist(values, bins=35, density=True, alpha=0.55, color=COLORS[name], label=name)
+            ax.hist(values, bins=edges, density=True, alpha=0.55, color=COLORS[name], label=name)
         ax.set_title(title)
         ax.set_xlabel("log(1 + variance)" if column == "sharpness_laplacian" else "доля энергии")
         ax.set_ylabel("плотность")
@@ -242,10 +252,10 @@ def plot_image_properties(faces, quality):
             ax.legend(frameon=False)
     for target, name in ((0, "real"), (1, "fake")):
         values = faces.loc[faces["target"].eq(target), "padding_fraction"].dropna()
-        axes[1, 2].hist(values, bins=np.linspace(0, 1, 26), alpha=0.55, color=COLORS[name], label=name)
+        axes[1, 2].hist(values, bins=np.linspace(0, 1, 26), density=True, alpha=0.55, color=COLORS[name], label=name)
     axes[1, 2].set_title("Фактический padding после adaptive-кропа")
     axes[1, 2].set_xlabel("доля площади")
-    axes[1, 2].set_ylabel("лиц")
+    axes[1, 2].set_ylabel("плотность внутри класса")
     axes[1, 2].legend(frameon=False)
     fig.suptitle("Геометрия, кодек исходника и простые признаки качества", fontsize=16)
     return fig
@@ -283,7 +293,7 @@ def flag_counts(frame, column="flags"):
     if column in frame:
         for flags in frame[column]:
             if isinstance(flags, (list, tuple, np.ndarray, set)):
-                counts.update(flags)
+                counts.update(set(flags))
     return pd.Series(counts, dtype=int).sort_values(ascending=False).rename("строк")
 
 
@@ -301,13 +311,13 @@ def plot_flags(faces):
     fig, axes = plt.subplots(1, 2, figsize=(15, 5.4), layout="constrained")
     for ax, column, title in ((axes[0], "flags", "Все флаги, включая информационные"),
                                (axes[1], "exclusion_flags", "Причины исключения до сплитов")):
-        values = flag_counts(faces, column).head(14).sort_values()
+        values = flag_counts(faces, column).div(max(len(faces), 1)).head(14).sort_values()
         if len(values):
             values.plot.barh(ax=ax, color=COLORS["fake"] if column == "exclusion_flags" else COLORS["train"])
         else:
             ax.text(0.5, 0.5, "Флагов нет", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title)
-        ax.set_xlabel("строк обработки")
+        ax.set_xlabel("доля строк с флагом; суммы могут превышать 1")
     return fig
 
 
@@ -323,10 +333,12 @@ def split_divergences(parts):
     rows = []
     for left_name, right_name in (("train", "validate"), ("train", "test"), ("validate", "test")):
         data = pd.concat([parts[left_name].assign(split=left_name), parts[right_name].assign(split=right_name)], ignore_index=True)
-        for feature in ("generator", "manipulation", "domain", "source_format", "yaw_bin", "pitch_bin", "roll_bin", "light_bin", "face_size_bin", "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin"):
+        for feature in ("generator", "manipulation", "domain", "source_format", "yaw_bin", "pitch_bin", "roll_bin", "light_bin", "face_size_bin", "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin", "source_jpeg_quality_level", "source_jpeg_quality_bin", "source_jpeg_subsampling"):
             condition = ["dataset", "target"]
-            if feature == "source_format":
+            if feature == "source_format" or feature.startswith("source_jpeg_"):
                 condition.append("generator")
+            if feature.startswith("source_jpeg_"):
+                condition.append("source_format")
             if feature not in data:
                 continue
             for key, group in data.groupby(condition, dropna=False, sort=True):
@@ -363,12 +375,15 @@ def plot_split_counts(parts):
     data["dataset"] = data["dataset"].str.lower()
     data = labels(data)
     fig, axes = plt.subplots(1, 3, figsize=(16, 5.2), layout="constrained")
-    table = pd.crosstab([data["dataset"], data["split"]], data["class"]).reindex(columns=["real", "fake"], fill_value=0)
-    table.plot.bar(ax=axes[0], stacked=True, color=[COLORS["real"], COLORS["fake"]], rot=50)
-    axes[0].set_title("Число лиц по источнику и классу")
+    joint = pd.crosstab(data["split"], [data["dataset"], data["class"]], normalize="index")
+    joint = joint.reindex(index=["train", "validate", "test"], fill_value=0)
+    joint.columns = [f"{dataset} / {label}" for dataset, label in joint.columns]
+    joint.plot.bar(ax=axes[0], stacked=True, colormap="tab20", rot=0)
+    axes[0].set_title("Совместные доли dataset + target")
     axes[0].set_xlabel("")
-    axes[0].set_ylabel("лиц")
-    axes[0].legend(title="", frameon=False)
+    axes[0].set_ylabel("доля всех лиц внутри сплита")
+    axes[0].set_ylim(0, 1)
+    axes[0].legend(title="", fontsize=7, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.14), frameon=False)
     for ax, column in zip(axes[1:], ("dataset", "source_format")):
         table = pd.crosstab(data[column].fillna("unknown"), data["split"], normalize="columns")
         table.reindex(columns=["train", "validate", "test"], fill_value=0).plot.bar(
@@ -461,30 +476,33 @@ def exclusion_table(parts):
     rows = []
     for dataset, group in parts["excluded"].groupby("dataset"):
         for flag, count in flag_counts(group).items():
-            rows.append({"dataset": dataset, "reason": flag, "records": int(count)})
-    return pd.DataFrame(rows, columns=["dataset", "reason", "records"])
+            rows.append({"dataset": dataset, "reason": flag, "records": int(count),
+                         "excluded_records": len(group), "row_prevalence": count / len(group)})
+    return pd.DataFrame(rows, columns=["dataset", "reason", "records", "excluded_records", "row_prevalence"])
 
 
 def plot_exclusions(table):
-    fig, ax = plt.subplots(figsize=(13, 5.2), layout="constrained")
+    fig, ax = plt.subplots(figsize=(13, 6), layout="constrained")
     if table.empty:
-        ax.text(0.5, 0.5, "Исключённых лиц нет", ha="center", va="center", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Исключённых строк нет", ha="center", va="center", transform=ax.transAxes)
     else:
-        matrix = table.pivot_table(index="reason", columns="dataset", values="records", aggfunc="sum", fill_value=0)
-        order = matrix.sum(axis=1).sort_values().tail(12).index
-        matrix.loc[order].plot.barh(ax=ax, stacked=True, colormap="Set2")
-    ax.set_title("Почему записи не попали в обучение")
-    ax.set_xlabel("строк обработки; одна строка может иметь несколько причин")
+        matrix = table.pivot_table(index="reason", columns="dataset", values="row_prevalence",
+                                  aggfunc="max", fill_value=0)
+        order = matrix.max(axis=1).sort_values().tail(12).index
+        matrix.loc[order].plot.barh(ax=ax, colormap="Set2")
+    ax.set_title("Частота причин исключения")
+    ax.set_xlabel("доля исключённых строк данного dataset; флаги пересекаются")
     ax.set_ylabel("")
     return fig
 
 
 def plot_source_files(quality):
     fig, ax = plt.subplots(figsize=(10, 4.2), layout="constrained")
+    edges = _hist_edges(np.log1p(quality["source_kib"]), 40)
     for target, name in ((0, "real"), (1, "fake")):
         values = quality.loc[quality["target"].eq(target), "source_kib"].dropna()
         if len(values):
-            ax.hist(np.log1p(values), bins=40, density=True, alpha=0.55, color=COLORS[name], label=name)
+            ax.hist(np.log1p(values), bins=edges, density=True, alpha=0.55, color=COLORS[name], label=name)
     ax.set_xlabel("log(1 + размер исходного файла в KiB)")
     ax.set_ylabel("плотность")
     ax.set_title("Размер исходного файла тоже может выдавать класс")
@@ -622,12 +640,12 @@ def plot_crop_boundaries(summary):
     suffixes = ("padded", "padding_gt05", "padding_gt10")
     labels_ = ("хотя бы 1 px", "площадь > 5%", "площадь > 10%")
     positions = np.arange(3)
-    axes[0, 0].bar(positions - 0.18, [100 * overall[f"share_images_{key}_all"] for key in suffixes],
+    axes[0, 0].bar(positions - 0.18, [overall[f"share_images_{key}_all"] for key in suffixes],
                    width=0.34, color=COLORS["train"], label="от всех исходников")
-    axes[0, 0].bar(positions + 0.18, [100 * overall[f"share_images_{key}_measured"] for key in suffixes],
+    axes[0, 0].bar(positions + 0.18, [overall[f"share_images_{key}_measured"] for key in suffixes],
                    width=0.34, color=COLORS["validate"], label="от измеренных primary-кропов")
     axes[0, 0].set_xticks(positions, labels_, rotation=10)
-    axes[0, 0].set_ylabel("доля исходных изображений, %")
+    axes[0, 0].set_ylabel("доля исходных изображений")
     axes[0, 0].set_title("Как часто квадрат выходит за границы")
     axes[0, 0].legend(frameon=False, fontsize=9)
     values = images.loc[images["primary_padding_measured"], "primary_padding_fraction"].sort_values().to_numpy()
@@ -641,16 +659,16 @@ def plot_crop_boundaries(summary):
     methods = summary["by_native_method"]
     if len(methods):
         methods = methods.sort_values("share_images_padded_measured")
-        axes[1, 0].barh(methods["native_method"].astype(str), methods["share_images_padded_measured"] * 100,
+        axes[1, 0].barh(methods["native_method"].astype(str), methods["share_images_padded_measured"],
                        color=COLORS["fake"], height=0.7)
-    axes[1, 0].set_xlabel("изображений с padding, % от измеренных")
+    axes[1, 0].set_xlabel("доля измеренных изображений с padding")
     axes[1, 0].set_title("Выход за границу по native-методам")
     ratios = images.loc[images["raw_dimensions_known"], "raw_aspect_ratio"].dropna()
     if len(ratios):
-        axes[1, 1].hist(ratios, bins=35, color="#598B9C", alpha=0.85)
+        axes[1, 1].hist(ratios, bins=_hist_edges(ratios, 35), density=True, color="#598B9C", alpha=0.85)
     axes[1, 1].axvline(1, color="#334155", ls="--", lw=1)
     axes[1, 1].set_xlabel("ширина исходника / высота исходника")
-    axes[1, 1].set_ylabel("исходных изображений")
+    axes[1, 1].set_ylabel("плотность")
     axes[1, 1].set_title(f"Квадратных исходников: {overall['share_square_inputs_known_dimensions']:.1%}")
     fig.suptitle("Предложенный квадрат 1.3 × bbox до adaptive-ограничения", fontsize=16)
     return fig
@@ -821,13 +839,13 @@ def plot_detector_coverage(summary):
     table = summary["by_native_method"].sort_values("merged_coverage_all")
     fig, ax = plt.subplots(figsize=(13, 7.2), layout="constrained")
     positions = np.arange(len(table))
-    ax.barh(positions - 0.18, table["native_coverage_all"] * 100, height=0.34,
+    ax.barh(positions - 0.18, table["native_coverage_all"], height=0.34,
             color="#AEC3DC", label="только native-проход")
-    ax.barh(positions + 0.18, table["merged_coverage_all"] * 100, height=0.34,
+    ax.barh(positions + 0.18, table["merged_coverage_all"], height=0.34,
             color=COLORS["train"], label="native + downscaled 320 после NMS")
     ax.set_yticks(positions, table["native_method"].astype(str))
-    ax.set_xlim(0, 102)
-    ax.set_xlabel("доля исходных изображений хотя бы с одной YuNet-детекцией, %")
+    ax.set_xlim(0, 1.02)
+    ax.set_xlabel("доля исходных изображений хотя бы с одной YuNet-детекцией")
     ax.set_title("Покрытие детектора по native-методам на одном фактическом прогоне")
     ax.legend(frameon=False)
     return fig
@@ -873,15 +891,17 @@ def near_duplicate_audit(audit):
 def plot_near_duplicate_audit(table):
     fig, ax = plt.subplots(figsize=(12, 3.8), layout="constrained")
     positions = np.arange(len(table))
-    ax.barh(positions, table["pairs"], color=["#198D91", "#9BAEC8", "#EF8354"])
+    shares = table["share"].fillna(0)
+    ax.barh(positions, shares, color=["#198D91", "#9BAEC8", "#EF8354"])
     ax.set_yticks(positions, table["outcome"])
-    total = table["pairs"].sum()
-    for position, row in table.iterrows():
-        label = f"{int(row['pairs']):,}" + (f" ({row['share']:.1%})" if total else "")
-        ax.annotate(label, (row["pairs"], position), xytext=(5, 0), textcoords="offset points",
-                    ha="left", va="center")
-    ax.set_xlim(0, max(1, table["pairs"].max()) * 1.25)
-    ax.set_xlabel("пар-кандидатов; одна строка может участвовать в нескольких парах")
+    if table["pairs"].sum():
+        for position, value in enumerate(shares):
+            ax.annotate(f"{value:.1%}", (value, position), xytext=(5, 0), textcoords="offset points",
+                        ha="left", va="center")
+    else:
+        ax.text(0.5, 0.5, "Пар-кандидатов нет", ha="center", va="center", transform=ax.transAxes)
+    ax.set_xlim(0, 1.08)
+    ax.set_xlabel("доля всех пар-кандидатов; суммы исходов = 1 при непустой выборке")
     ax.set_title("pHash даёт кандидатов, объединение требует проверки пикселей")
     ax.invert_yaxis()
     return fig
@@ -926,9 +946,11 @@ def _sha256(path):
 
 def pixel_illustrations(root, faces, metadata_path):
     cache = root / "data/eda_cache/df40"
-    paths = faces.loc[faces["eligible"].fillna(False), ["input_path", "crop_path"]]
-    pixels_available = len(paths) > 0 and all(
-        value is not None and Path(str(value)).is_file() for value in paths.to_numpy().ravel()
+    candidates = faces.loc[faces["eligible"].fillna(False)]
+    path_columns = [name for name in ("input_path", "crop_path", "crop_verification_path") if name in candidates]
+    pixels_available = len(candidates) > 0 and all(
+        Path(str(row["input_path"])).is_file() and _crop_available(row)
+        for row in candidates[path_columns].to_dict("records")
     )
     if pixels_available:
         cache.mkdir(parents=True, exist_ok=True)
@@ -959,7 +981,9 @@ def pixel_illustrations(root, faces, metadata_path):
             "source_notebook_path": "notebooks/eda_df40.ipynb",
             "source_notebook_sha256": _sha256(notebook) if notebook.is_file() else None,
             "source_commit": None, "quality_sample_size": len(quality), "seed": 42,
-            "artifacts": artifacts,
+            "source_helper_path": "src/notebook_src/df40_eda.py",
+            "source_helper_sha256": _sha256(Path(__file__)),
+            "artifacts": artifacts, "distribution_normalization": _distribution_normalization(),
         }
         (cache / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         mode = "fresh_pixels"
@@ -971,6 +995,8 @@ def pixel_illustrations(root, faces, metadata_path):
         mode = "historical_pixel_artifacts"
     if manifest.get("schema_version") != 1 or manifest.get("scope") != "preprocessing_pixel_illustrations_only":
         raise ValueError("Неизвестный формат pixel-illustration cache")
+    if manifest.get("distribution_normalization", {}).get("version") != 1:
+        raise ValueError("Refresh normalized pixel distributions with scripts/refresh_df40_pixel_distributions.py")
     if manifest["metadata_sha256"] != _sha256(metadata_path):
         raise ValueError("Pixel-illustration cache относится к другой версии metadata")
     source_commit = manifest.get("source_commit")
@@ -1010,7 +1036,8 @@ def pixel_illustrations(root, faces, metadata_path):
 def global_split_divergences(parts):
     features = ("dataset", "target", "generator", "manipulation", "domain", "source_format",
                 "yaw_bin", "pitch_bin", "roll_bin", "light_bin", "face_size_bin",
-                "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin")
+                "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin",
+                "source_jpeg_quality_level", "source_jpeg_quality_bin", "source_jpeg_subsampling")
     rows = []
     for first, second in (("train", "validate"), ("train", "test"), ("validate", "test")):
         for feature in features:
@@ -1061,8 +1088,9 @@ def balance_before_after(baseline, updated):
 def plot_balance_before_after(table):
     features = ("dataset", "target", "generator", "domain", "source_format",
                 "face_size_bin", "source_resolution_bin", "yaw_bin", "light_bin",
-                "face_mask_fraction_of_crop_bin")
-    fig, axes = plt.subplots(1, 2, figsize=(17, 8), layout="constrained")
+                "face_mask_fraction_of_crop_bin", "source_jpeg_quality_level",
+                "source_jpeg_quality_bin", "source_jpeg_subsampling")
+    fig, axes = plt.subplots(1, 2, figsize=(18, 10), layout="constrained")
     for ax, scope, title in zip(axes, ("global", "conditional"),
                                 ("Глобальные маргинальные доли", "Условные распределения")):
         subset = table.loc[table["scope"].eq(scope) & table["feature"].isin(features)]
@@ -1085,3 +1113,265 @@ def plot_balance_before_after(table):
         ax.legend(frameon=False)
     fig.suptitle("Как новый split изменил расхождения распределений", fontsize=16)
     return fig
+
+
+def _read_crop(row):
+    path = row.get("crop_path")
+    if path is not None and Path(str(path)).is_file():
+        image = cv2.imread(str(path))
+        if image is None:
+            raise ValueError("Cannot decode saved face crop: " + str(path))
+        return image
+    from src.preprocessing.verification_views import read_verification_view
+
+    if row.get("crop_verification_pixel_sha256") != row.get("crop_sha256"):
+        raise ValueError("Verification crop is not identical to recorded crop pixels")
+    return read_verification_view(
+        row["crop_verification_path"], row["crop_verification_sha256"],
+        row["crop_verification_pixel_sha256"], row["crop_verification_size"],
+        row["crop_verification_codec"],
+    )
+
+
+def _crop_available(row):
+    for column in ("crop_path", "crop_verification_path"):
+        path = row.get(column)
+        if path is not None and Path(str(path)).is_file():
+            return True
+    return False
+
+
+def migrate_pixel_metadata_binding(root, proof_path):
+    manifest_path = root / "data/eda_cache/df40/manifest.json"
+    if not manifest_path.is_file():
+        return {"status": "no_pixel_cache"}
+    manifest = json.loads(manifest_path.read_text())
+    proof_path = Path(proof_path)
+    proof = json.loads(proof_path.read_text())
+    if proof.get("schema_version") != 1:
+        raise ValueError("Неизвестный формат metadata extension proof")
+    metadata_path = manifest.get("metadata_path")
+    records = proof["files"]
+    matches = [record for record in records if record["path"] == metadata_path] if metadata_path else [
+        record for record in records if record["path"].endswith("/df40/metadata.parquet")]
+    if len(matches) != 1:
+        raise ValueError("Proof должен содержать одну запись связанных DF40 metadata")
+    record = matches[0]
+    current_path, backup_path = root / record["path"], root / record["backup_path"]
+    if _sha256(current_path) != record["new_sha256"] or _sha256(backup_path) != record["old_sha256"]:
+        raise ValueError("Metadata extension proof не совпадает с current/backup SHA")
+    previous = pd.read_parquet(backup_path)
+    current = pd.read_parquet(current_path)
+    if list(previous.columns) != record["old_columns"] or len(current) != record["rows"]:
+        raise ValueError("Proof не соответствует прежней схеме metadata")
+    added = set(current.columns) - set(previous.columns)
+    if added != set(record["columns_added"]) or not record.get("all_old_columns_equal"):
+        raise ValueError("Proof должен подтверждать расширение без изменения прежних столбцов")
+    pd.testing.assert_frame_equal(previous, current[list(previous.columns)], check_exact=True)
+    for name, artifact in manifest.get("artifacts", {}).items():
+        artifact_path = manifest_path.parent / artifact["path"]
+        if _sha256(artifact_path) != artifact["sha256"]:
+            raise ValueError("Повреждён pixel artifact: " + name)
+    if manifest["metadata_sha256"] == record["new_sha256"]:
+        return {"status": "already_bound", "metadata_sha256": record["new_sha256"]}
+    if manifest["metadata_sha256"] != record["old_sha256"]:
+        raise ValueError("Pixel cache связан с другой исходной версией metadata")
+    manifest["metadata_enrichments"] = [*manifest.get("metadata_enrichments", []), {
+        "kind": proof.get("kind", "metadata_extension"), "proof_path": str(proof_path.relative_to(root)),
+        "proof_sha256": _sha256(proof_path), "old_metadata_sha256": record["old_sha256"],
+        "new_metadata_sha256": record["new_sha256"], "all_old_columns_equal": True,
+        "columns_added": sorted(added),
+    }]
+    manifest["metadata_sha256"] = record["new_sha256"]
+    temporary = manifest_path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    temporary.replace(manifest_path)
+    return {"status": "metadata_extension_migration", "metadata_sha256": record["new_sha256"]}
+
+
+def assert_same_cohort(first, second):
+    import hashlib
+
+    def fingerprint(parts):
+        columns = ["dataset", "sample_id", "target", "image_sha256", "crop_sha256"]
+        frame = pd.concat(list(parts.values()), ignore_index=True)
+        columns = [column for column in columns if column in frame]
+        frame = frame[columns].copy()
+        if frame.duplicated(["dataset", "sample_id"]).any():
+            raise ValueError("Повторяющиеся face IDs не дают проверить baseline cohort")
+        if "target" in frame:
+            frame["target"] = pd.to_numeric(frame["target"], errors="raise").astype("Int64")
+        frame = frame.fillna("").astype(str).sort_values(["dataset", "sample_id"], kind="stable")
+        content = pd.util.hash_pandas_object(frame, index=False, categorize=False).to_numpy().tobytes()
+        return len(frame), tuple(columns), hashlib.sha256(content).hexdigest()
+
+    if fingerprint(first) != fingerprint(second):
+        raise ValueError("Baseline и текущий split построены по разным input records")
+
+
+def validate_preprocessing_provenance(audits):
+    import re
+
+    expected = {
+        "size": 256, "expansion": 1.3, "crop_policy": "adaptive",
+        "min_face_size": 32, "detection_threshold": 0.9,
+    }
+    required_models = {"yunet_model", "landmarker_model"}
+    model_reference = None
+    rows = []
+    for dataset, audit in audits.items():
+        provenance = audit.get("provenance", {})
+        settings = provenance.get("settings", {})
+        for key, value in expected.items():
+            if settings.get(key) != value:
+                raise ValueError(f"{dataset}: preprocessing setting {key} must equal {value!r}")
+        models = provenance.get("model_sha256")
+        if not isinstance(models, dict) or not required_models <= models.keys():
+            raise ValueError(f"{dataset}: model_sha256 must include YuNet and Face Landmarker")
+        if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value)
+                   for value in models.values()):
+            raise ValueError(f"{dataset}: invalid model SHA256 provenance")
+        models = {key: value.lower() for key, value in models.items()}
+        if model_reference is None:
+            model_reference = models
+        elif models != model_reference:
+            raise ValueError(f"{dataset}: face model weights differ across datasets")
+        rows.append({
+            "dataset": dataset, **{key: settings[key] for key in expected},
+            "compact_verification_crops": settings.get("compact_verification_crops"),
+            **{"model_sha256:" + key: value for key, value in sorted(models.items())},
+            **{key: provenance.get(key) for key in (
+                "preprocessor_source_sha256", "runner_source_sha256",
+                "verification_views_source_sha256", "jpeg_source_sha256")},
+            "inference_fingerprint": audit.get("fingerprint"),
+        })
+    return pd.DataFrame(rows).set_index("dataset")
+
+
+def storage_conversion_audit(root, processed_root=None):
+    processed_root = Path(processed_root) if processed_root is not None else root / "data/processed/full"
+    columns = ["dataset", "kind", "converted_crop_records", "all_crop_pixels_equal",
+               "all_nonstorage_columns_equal", "metadata_sha256", "audit_path"]
+    rows = []
+    for dataset in DATASETS:
+        audit_path = processed_root / dataset / "source_crop_audit.json"
+        if not audit_path.is_file():
+            continue
+        audit = json.loads(audit_path.read_text())
+        records = audit.get("files", [])
+        if audit.get("all_crop_pixels_equal") is not True or not records:
+            raise ValueError(f"{dataset}: lossless crop conversion lacks a complete pixel equality proof")
+        if not all(record.get("all_nonstorage_columns_equal") is True for record in records):
+            raise ValueError(f"{dataset}: storage conversion changed nonstorage measurements")
+        metadata = processed_root / dataset / "metadata.parquet"
+        matches = []
+        for record in records:
+            path = Path(record["path"])
+            path = path if path.is_absolute() else root / path
+            if path.resolve() == metadata.resolve():
+                matches.append(record)
+        if len(matches) != 1 or matches[0]["new_sha256"] != _sha256(metadata):
+            raise ValueError(f"{dataset}: storage conversion proof is not bound to current metadata")
+        rows.append({
+            "dataset": dataset, "kind": audit.get("kind"),
+            "converted_crop_records": int(audit["converted_crop_records"]),
+            "all_crop_pixels_equal": True, "all_nonstorage_columns_equal": True,
+            "metadata_sha256": matches[0]["new_sha256"], "audit_path": str(audit_path),
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _hist_edges(values, bins):
+    values = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+    values = values[np.isfinite(values)]
+    return np.histogram_bin_edges(values, bins=bins) if len(values) else np.linspace(0, 1, bins + 1)
+
+
+def _distribution_normalization():
+    return {
+        "version": 1, "numeric": "per-group density with shared finite-value bin edges",
+        "categorical": "conditional probability mass",
+        "multilabel": "per-row prevalence with explicit denominator",
+        "absolute_counts": "tables",
+    }
+
+
+def refresh_pixel_distribution_cache(root, faces, metadata_path):
+    import copy
+    import hashlib
+    import tempfile
+    from datetime import datetime, timezone
+
+    cache = root / "data/eda_cache/df40"
+    manifest_path = cache / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    metadata_sha = _sha256(metadata_path)
+    if manifest["metadata_sha256"] != metadata_sha:
+        raise ValueError("Distribution refresh requires the same verified metadata")
+    original = copy.deepcopy(manifest)
+    for name, artifact in manifest["artifacts"].items():
+        path = cache / artifact["path"]
+        if _sha256(path) != artifact["sha256"]:
+            raise ValueError("Corrupted pixel cache artifact: " + name)
+    example_sha = manifest["artifacts"]["examples"]["sha256"]
+    seed = int(manifest.get("seed", 42))
+    maximum = int(manifest["quality_sample_size"])
+    quality = quality_sample(faces, maximum=maximum, seed=seed)
+    helper_sha = _sha256(Path(__file__))
+    suffix = helper_sha[:12]
+    figures = {
+        "image_properties": plot_image_properties(faces, quality),
+        "source_files": plot_source_files(quality),
+    }
+    updates = {}
+    with tempfile.TemporaryDirectory(dir=cache, prefix="distribution_refresh_") as directory:
+        staging = Path(directory)
+        for name, figure in figures.items():
+            path = staging / f"{name}.normalized.{suffix}.png"
+            figure.savefig(path, dpi=140)
+            plt.close(figure)
+            updates[name] = {
+                "path": path.name, "sha256": _sha256(path),
+                "normalization": _distribution_normalization(),
+                "source_helper_sha256": helper_sha,
+            }
+        summary = quality.groupby("target").agg(
+            лиц=("sample_id", "size"), чёткость_медиана=("sharpness_laplacian", "median"),
+            HF_медиана=("hf_ratio", "median"), размер_KiB_медиана=("source_kib", "median"),
+        ).rename(index={0: "real", 1: "fake"})
+        summary_path = staging / f"quality_summary.normalized.{suffix}.html"
+        summary_path.write_text(summary.to_html())
+        updates["quality_summary"] = {"path": summary_path.name, "sha256": _sha256(summary_path)}
+        selected = faces.loc[faces["eligible"] & faces["crop_path"].notna()].sample(
+            min(maximum, int((faces["eligible"] & faces["crop_path"].notna()).sum())), random_state=seed,
+        )
+        raw_present = int(selected["input_path"].map(lambda value: Path(str(value)).is_file()).sum())
+        refresh = {
+            "kind": "normalized_distribution_refresh", "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "metadata_sha256": metadata_sha, "source_helper_sha256": helper_sha,
+            "seed": seed, "quality_sample_size": len(quality),
+            "selection_sha256": hashlib.sha256("\n".join(quality["sample_id"].astype(str)).encode()).hexdigest(),
+            "pixel_source": "exact training crops or verified pixel-identical lossless crop views",
+            "source_file_sizes": "original raw file size or preserved metadata.file_size",
+            "original_raw_files_present_in_selection": raw_present,
+            "original_photos_rerendered": False, "examples_sha256_unchanged": example_sha,
+            "previous_artifact_sha256": {name: original["artifacts"][name]["sha256"] for name in updates},
+            "updated_artifact_sha256": {name: artifact["sha256"] for name, artifact in updates.items()},
+        }
+        for name, artifact in updates.items():
+            (staging / artifact["path"]).replace(cache / artifact["path"])
+            manifest["artifacts"][name] = artifact
+        manifest["distribution_normalization"] = _distribution_normalization()
+        manifest["normalization_refreshes"] = [*manifest.get("normalization_refreshes", []), refresh]
+        temporary = manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+        temporary.replace(manifest_path)
+    active = {artifact["path"] for artifact in manifest["artifacts"].values()}
+    for name in updates:
+        previous_path = original["artifacts"][name]["path"]
+        path = cache / previous_path
+        if previous_path not in active and path.parent.resolve() == cache.resolve():
+            path.unlink(missing_ok=True)
+    if _sha256(cache / manifest["artifacts"]["examples"]["path"]) != example_sha:
+        raise RuntimeError("Original source-photo illustration changed during distribution refresh")
+    return refresh

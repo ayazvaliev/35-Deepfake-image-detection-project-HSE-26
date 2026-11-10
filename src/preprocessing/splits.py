@@ -10,7 +10,12 @@ import pandas as pd
 _GROUP_COLUMNS = ("source_group", "identity_group")
 _HASH_COLUMNS = ("image_sha256", "decoded_sha256", "crop_sha256")
 _SAMPLE_STRATA = ("target", "generator", "manipulation", "domain", "author_split")
-_BALANCE_COLUMNS = ("dataset", "target", "generator", "manipulation", "domain", "yaw_bin", "pitch_bin", "roll_bin", "light_bin", "source_format", "face_size_bin", "padding_bin", "source_resolution_bin", "face_mask_fraction_of_crop_bin")
+_JPEG_BALANCE_COLUMNS = ("source_jpeg_quality_level", "source_jpeg_quality_bin", "source_jpeg_subsampling")
+_BALANCE_COLUMNS = (
+    "dataset", "target", "generator", "manipulation", "domain", "yaw_bin", "pitch_bin", "roll_bin",
+    "light_bin", "source_format", *_JPEG_BALANCE_COLUMNS, "face_size_bin", "padding_bin",
+    "source_resolution_bin", "face_mask_fraction_of_crop_bin",
+)
 _BALANCE_LIST_COLUMNS = ("transformation_tags",)
 _MASK_OCCUPANCY_EDGES = (0.0, 0.25, 0.5, 0.75, 1.0)
 _MASK_OCCUPANCY_LABELS = ("[0,0.25)", "[0.25,0.5)", "[0.5,0.75)", "[0.75,1]")
@@ -194,6 +199,42 @@ def _mask_occupancy(data):
     data[column + "_bin"] = labels
 
 
+def _jpeg_features(data):
+    if "source_format" not in data:
+        return
+    from src.preprocessing.jpeg import jpeg_quality_bin
+
+    image_format = data["source_format"].map(_value).str.upper()
+    is_jpeg = image_format.isin(["JPEG", "JPG"])
+    non_jpeg = ~is_jpeg & ~image_format.isin(["", "UNKNOWN", "NONE", "NAN"])
+    raw = data.get("source_jpeg_quality", pd.Series(np.nan, index=data.index))
+    quality = pd.to_numeric(raw, errors="coerce")
+    valid = is_jpeg & quality.between(1, 100) & quality.mod(1).eq(0)
+    data["source_jpeg_quality"] = quality.where(valid).astype("Int16")
+    data["source_jpeg_quality_level"] = "unknown"
+    data.loc[non_jpeg, "source_jpeg_quality_level"] = "not_jpeg"
+    data.loc[valid, "source_jpeg_quality_level"] = quality.loc[valid].astype(int).astype(str)
+    data["source_jpeg_quality_bin"] = [
+        "not_jpeg" if other else jpeg_quality_bin(value)
+        for value, other in zip(data["source_jpeg_quality"], non_jpeg)
+    ]
+    subsampling = data.get("source_jpeg_subsampling", pd.Series("unknown", index=data.index)).map(_value)
+    data["source_jpeg_subsampling"] = subsampling.where(subsampling.isin(["4:4:4", "4:2:2", "4:2:0", "4:0:0", "not_applicable_cmyk"]), "unknown")
+    data.loc[non_jpeg, "source_jpeg_subsampling"] = "not_jpeg"
+    data.loc[~is_jpeg & ~non_jpeg, "source_jpeg_subsampling"] = "unknown"
+
+
+def _balance_condition(column, columns):
+    condition = [] if column == "dataset" else ["dataset"]
+    if column not in ("dataset", "target"):
+        condition.append("target")
+    if (column == "source_format" or column in _JPEG_BALANCE_COLUMNS) and "generator" in columns:
+        condition.append("generator")
+    if column in _JPEG_BALANCE_COLUMNS and "source_format" in columns:
+        condition.append("source_format")
+    return condition
+
+
 def _prepare(frame):
     required = {"dataset", "sample_id", "target"}
     if not required <= set(frame):
@@ -248,6 +289,7 @@ def _prepare(frame):
             labels=["<256", "256-512", ">=512"], right=False,
         ).astype(object).fillna("unknown")
     _mask_occupancy(data)
+    _jpeg_features(data)
     from src.preprocessing.quality import apply_quality_policy
 
     data, quality_audit = apply_quality_policy(data)
@@ -325,11 +367,7 @@ def _feature_counts(data, weights=None):
     for column in _BALANCE_COLUMNS:
         if column not in data:
             continue
-        condition = [] if column == "dataset" else ["dataset"]
-        if column not in ("dataset", "target"):
-            condition.append("target")
-        if column == "source_format" and "generator" in data:
-            condition.append("generator")
+        condition = _balance_condition(column, data)
         columns = [*condition, column]
         if weights is None:
             grouped = data.groupby(columns, dropna=False, sort=True).size()
@@ -372,11 +410,7 @@ def _assign_flexible(data, fraction, seed, row_probabilities=None):
         counts = counters.setdefault(group_id, Counter())
         counts[("size",)] += 1
         for column in scalar_columns:
-            condition = [] if column == "dataset" else [values["dataset"]]
-            if column not in ("dataset", "target"):
-                condition.append(values["target"])
-            if column == "source_format" and "generator" in values:
-                condition.append(values["generator"])
+            condition = [values[name] for name in _balance_condition(column, values)]
             counts[(column, *condition, values[column])] += 1
         for column in list_columns:
             for tag in _tags(raw_values[column]) or ["unknown"]:
@@ -496,7 +530,7 @@ def _global_balance(data):
     kept = data.loc[data["partition"].isin(partitions)]
     denominators = {part: int(kept["partition"].eq(part).sum()) for part in partitions}
     records = []
-    for column in ("dataset", "target", "source_format"):
+    for column in ("dataset", "target", "source_format", *_JPEG_BALANCE_COLUMNS):
         if column not in kept:
             continue
         counts = {part: kept.loc[kept["partition"].eq(part), column].map(_value).value_counts()
@@ -518,11 +552,7 @@ def _balance(data):
     for column in _BALANCE_COLUMNS:
         if column not in combined:
             continue
-        condition = [] if column == "dataset" else ["dataset"]
-        if column not in ("dataset", "target"):
-            condition.append("target")
-        if column == "source_format" and "generator" in combined:
-            condition.append("generator")
+        condition = _balance_condition(column, combined)
         conditions = [((), combined)] if not condition else combined.groupby(condition, sort=True, dropna=False)
         for key, rows in conditions:
             key = key if isinstance(key, tuple) else (key,)
@@ -616,7 +646,13 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
                            near_duplicate_threshold=4,
                            test_fraction=0.15, author_validation_fraction=0.2,
                            near_duplicate_verifier=None, split_policy="global_balanced",
-                           verified_group_cache=None):
+                           verified_group_cache=None, group_cache_policy="strict", verification_cache_size=512):
+    if (not isinstance(verification_cache_size, (int, np.integer))
+            or isinstance(verification_cache_size, (bool, np.bool_)) or verification_cache_size < 1):
+        raise ValueError("verification_cache_size must be a positive integer")
+    verification_cache_size = int(verification_cache_size)
+    if group_cache_policy not in {"strict", "versioned"}:
+        raise ValueError("group_cache_policy must be strict or versioned")
     if split_policy not in {"global_balanced", "author_preserved"}:
         raise ValueError("split_policy must be global_balanced or author_preserved")
     if not 0 < validation_fraction < 1 or not 0 < test_fraction < 1:
@@ -642,12 +678,17 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
     data = _prepare(normalized)
     cache_path = None
     cache_exists = False
+    cache_selection = {"policy": group_cache_policy}
     if verified_group_cache is not None:
         from pathlib import Path
 
         if near_duplicate_verifier is not None:
             raise ValueError("A verified group cache cannot be combined with an injected verifier")
         cache_path = Path(verified_group_cache).expanduser().resolve()
+        if group_cache_policy == "versioned":
+            from src.preprocessing.group_cache import versioned_cache_path
+
+            cache_path, cache_selection = versioned_cache_path(data, cache_path, near_duplicate_threshold)
         cache_exists = (cache_path / "manifest.json").is_file()
         if cache_path.exists() and not cache_path.is_dir():
             raise ValueError("The verified group cache must be a directory")
@@ -665,7 +706,7 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
             **previous_verification, "execution_mode": "reused_cache", "verified_now": False,
         }
     else:
-        verifier = near_duplicate_verifier if near_duplicate_verifier is not None else PixelNearDuplicateVerifier(data)
+        verifier = near_duplicate_verifier if near_duplicate_verifier is not None else PixelNearDuplicateVerifier(data, cache_size=verification_cache_size)
         candidate_pairs = _connect(data, near_duplicate_threshold, verifier=verifier)
         if isinstance(verifier, PixelNearDuplicateVerifier):
             verification_report = verifier.report()
@@ -688,6 +729,7 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
             cache_report = write_verified_groups(
                 data, cache_path, near_duplicate_threshold, verification_report,
             )
+    cache_report = {**cache_report, **cache_selection}
     initial_ineligible = int((~data["eligible"]).sum())
     nonempty = data.loc[data["eligible"] & data["crop_sha256"].map(_value).ne("")]
     conflicting_hashes = nonempty.groupby("crop_sha256")["target"].nunique()
@@ -771,6 +813,7 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
         "label_normalization": normalization_report,
         "df40_lineage_policy": lineage_report,
         "near_duplicate_verification": verification_report,
+        "requested_verification_cache_size": verification_cache_size,
         "group_cache": cache_report,
         "quality_policy": data.attrs.get("quality_policy", {}),
         "transformation_balance": "Canonical tag-presence marginals within dataset and target; empty tag lists are tracked as unknown. Multi-label shares use faces as the denominator.",
@@ -791,6 +834,15 @@ def build_composite_splits(frame, validation_fraction=0.15, seed=42,
         "measured_feature_population_balance": False,
         "final_crop_format": "PNG",
         "source_format_balance": "Decoded original image format, conditional on dataset, target and generator",
+        "source_jpeg_balance": {
+            "features": list(_JPEG_BALANCE_COLUMNS),
+            "condition": ["dataset", "target", "generator", "source_format"],
+            "quality_basis": "Exact match of original JPEG quantization tables to standard IJG tables; the quality number is an encoder-scale estimate, not an original encoder tag",
+            "custom_tables": "unknown quality; retain the actual quantization-table signature for audit",
+            "unknown_excluded": False,
+            "known_quality_rows": int(data["source_jpeg_quality"].notna().sum()) if "source_jpeg_quality" in data else 0,
+            "jpeg_rows": int(data["source_format"].map(_value).str.upper().isin(["JPEG", "JPG"]).sum()) if "source_format" in data else 0,
+        },
         "face_mask_crop_occupancy": {
             "feature": "face_mask_fraction_of_crop",
             "bin_feature": "face_mask_fraction_of_crop_bin",

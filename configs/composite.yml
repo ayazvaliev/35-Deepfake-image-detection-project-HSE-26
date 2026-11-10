@@ -15,5 +15,14 @@ preprocessing:
   detection_threshold: 0.9
   output_format: PNG
 sampling:
-  df40_max_images: 100000
-  other_dataset_max_images: 20000
+  profiles:
+    full:
+      df40: 100000
+      140k: 140000
+      openforensics: 70300
+      mffi: 181947
+    demo:
+      df40: 20000
+      140k: 20000
+      openforensics: 20000
+      mffi: 20000

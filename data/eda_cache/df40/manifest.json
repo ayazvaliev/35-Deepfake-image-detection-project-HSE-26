@@ -1,39 +1,81 @@
 {
   "schema_version": 1,
   "scope": "preprocessing_pixel_illustrations_only",
-  "origin": "extracted_from_verified_executed_notebook",
-  "metadata_path": "data/processed/df40/metadata.parquet",
-  "metadata_sha256": "ee34a665e869b25ffc18ba13381bb0576cabf189ca159861bd4cf38fa0ef802b",
+  "origin": "computed_from_real_pixels",
+  "metadata_path": "data/processed/full/df40/metadata.parquet",
+  "metadata_sha256": "5cd5a0c7dc9b37062f2122dd37e47d5edadcb13ae278e5810b210f9675daf34a",
   "source_notebook_path": "notebooks/eda_df40.ipynb",
-  "source_notebook_sha256": "c3411479a7989eb0f9a3e9ea6ca5923e0c896bb02b139079951fb255527716da",
-  "source_commit": "cc4c3a0f4f928cb5113a399d5687048e0c59eb92",
+  "source_notebook_sha256": "5ab99cf8ee90ac4dc1d63b340b7d61ff3c0d0d906c80bbb694d3e04ab48011cf",
+  "source_commit": null,
   "quality_sample_size": 3000,
   "seed": 42,
+  "source_helper_path": "src/notebook_src/df40_eda.py",
+  "source_helper_sha256": "6c854996c15db28c6e91b41d942843b6fca8d7d75deb8aefd183e6a541b4c6f3",
   "artifacts": {
     "examples": {
       "path": "examples.png",
-      "sha256": "f28781dd1f5b1a703ab5c48f119504298f5ac6086118588c53c26dacede990ce",
-      "cell_id": "df40-009",
-      "output_index": 0
+      "sha256": "fe65c27dc942a5a45ed6a46b1144a8c1f655bc8f79998f69fa80c8c1ac4f3993"
     },
     "image_properties": {
-      "path": "image_properties.png",
-      "sha256": "d8c1c7e65dc17ec66cbf5b26c4c8d8da2e471854c05bc0d1b40cb0ee7bfa1491",
-      "cell_id": "df40-011",
-      "output_index": 1
+      "path": "image_properties.normalized.237fd9f2f351.png",
+      "sha256": "72806854308bf24d6c72981bf2677eb3804a4d4f67ede5202f84cab27410c10a",
+      "normalization": {
+        "version": 1,
+        "numeric": "per-group density with shared finite-value bin edges",
+        "categorical": "conditional probability mass",
+        "multilabel": "per-row prevalence with explicit denominator",
+        "absolute_counts": "tables"
+      },
+      "source_helper_sha256": "237fd9f2f35130abe46d92b1f260e0d36bf69e71e3d72e0d8c5682157598a6b0"
     },
     "source_files": {
-      "path": "source_files.png",
-      "sha256": "a1223bbeebaf8d126cc1fdbf44f564b657aa5c1bdb1f3a9cafd1b925a1c741ab",
-      "cell_id": "df40-011",
-      "output_index": 2
+      "path": "source_files.normalized.237fd9f2f351.png",
+      "sha256": "f1d894bb19a37dbc34a214b5939d8e0a1f199dcc12ea07c93126b7eaa7665197",
+      "normalization": {
+        "version": 1,
+        "numeric": "per-group density with shared finite-value bin edges",
+        "categorical": "conditional probability mass",
+        "multilabel": "per-row prevalence with explicit denominator",
+        "absolute_counts": "tables"
+      },
+      "source_helper_sha256": "237fd9f2f35130abe46d92b1f260e0d36bf69e71e3d72e0d8c5682157598a6b0"
     },
     "quality_summary": {
-      "path": "quality_summary.html",
-      "sha256": "840415c1214a6502a9b6af5e801b99297e599d119e2a73e6bd3bcc10d0d44aa8",
-      "cell_id": "df40-011",
-      "output_index": 3
+      "path": "quality_summary.normalized.237fd9f2f351.html",
+      "sha256": "010ab0f27536b8882fd332f84a70b545c47a89da64b0eed08b58fe3c85b7d3bb"
     }
   },
-  "source_notebook_snapshot": "data/splits/author_baseline/eda_df40_executed.ipynb"
+  "distribution_normalization": {
+    "version": 1,
+    "numeric": "per-group density with shared finite-value bin edges",
+    "categorical": "conditional probability mass",
+    "multilabel": "per-row prevalence with explicit denominator",
+    "absolute_counts": "tables"
+  },
+  "normalization_refreshes": [
+    {
+      "kind": "normalized_distribution_refresh",
+      "created_at_utc": "2026-11-10T06:13:44.057372+00:00",
+      "metadata_sha256": "5cd5a0c7dc9b37062f2122dd37e47d5edadcb13ae278e5810b210f9675daf34a",
+      "source_helper_sha256": "237fd9f2f35130abe46d92b1f260e0d36bf69e71e3d72e0d8c5682157598a6b0",
+      "seed": 42,
+      "quality_sample_size": 3000,
+      "selection_sha256": "8354575afc32196dd8a1ab082d0acf58ee4e40c23cedf5474c473f6ddc33dd12",
+      "pixel_source": "exact training crops or verified pixel-identical lossless crop views",
+      "source_file_sizes": "original raw file size or preserved metadata.file_size",
+      "original_raw_files_present_in_selection": 0,
+      "original_photos_rerendered": false,
+      "examples_sha256_unchanged": "fe65c27dc942a5a45ed6a46b1144a8c1f655bc8f79998f69fa80c8c1ac4f3993",
+      "previous_artifact_sha256": {
+        "image_properties": "62e316414718ff425b804a741fdf3782de8fcb8d9d0029146e75970a85bfe733",
+        "source_files": "6887fb15de64246bbe21a1b8486df9618fd397307b0f8ba5c0b6e8c23be782ea",
+        "quality_summary": "010ab0f27536b8882fd332f84a70b545c47a89da64b0eed08b58fe3c85b7d3bb"
+      },
+      "updated_artifact_sha256": {
+        "image_properties": "72806854308bf24d6c72981bf2677eb3804a4d4f67ede5202f84cab27410c10a",
+        "source_files": "f1d894bb19a37dbc34a214b5939d8e0a1f199dcc12ea07c93126b7eaa7665197",
+        "quality_summary": "010ab0f27536b8882fd332f84a70b545c47a89da64b0eed08b58fe3c85b7d3bb"
+      }
+    }
+  ]
 }

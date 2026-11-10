@@ -8,6 +8,10 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from src.preprocessing.verification_views import (
+    VERIFICATION_VIEW_VERSION, normalized_original_view, read_verification_view,
+)
+
 
 def _text(value):
     if value is None or value is pd.NA or isinstance(value, float) and np.isnan(value):
@@ -39,39 +43,89 @@ class PixelNearDuplicateVerifier:
             "min_gray_std": float(min_gray_std),
             "min_laplacian_variance": float(min_laplacian_variance), "cache_size": int(cache_size),
             "opencv_threads": cv2.getNumThreads(),
+            "verification_view_version": VERIFICATION_VIEW_VERSION,
         }
         if not 0 < ssim_min <= 1 or not 0 <= rgb_mae_max < 1 or view_size < 16:
             raise ValueError("Invalid near-duplicate similarity settings")
         if min_gray_std < 0 or min_laplacian_variance < 0 or aspect_ratio_tolerance < 0 or cache_size < 1:
             raise ValueError("Invalid near-duplicate view settings")
         columns = [name for name in ("sample_id", "input_path", "crop_path", "path", "image_sha256",
-                                      "decoded_sha256", "crop_sha256") if name in frame]
+                                      "decoded_sha256", "crop_sha256", "original_verification_path",
+                                      "original_verification_sha256", "original_verification_pixel_sha256",
+                                      "original_verification_codec", "original_verification_size", "original_aspect_ratio",
+                                      "crop_verification_path", "crop_verification_sha256", "crop_verification_pixel_sha256",
+                                      "crop_verification_codec", "crop_verification_size") if name in frame]
         self.rows = frame[columns].to_dict("index")
         self.counts = Counter()
         self.unreadable_indices = set()
         self.examples = []
         self._view = lru_cache(maxsize=cache_size)(self._load_view)
 
-    def _load_view(self, filename):
+    def _load_view(self, filename, file_sha256="", pixel_sha256="", stored_size=None,
+                   codec="", aspect_ratio=None):
         if not filename or not Path(filename).is_file():
+            self.counts["missing_proxy_views"] += bool(file_sha256)
             return None
         try:
-            content = Path(filename).read_bytes()
-            self.counts["loaded_bytes"] += len(content)
-            image = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if image is None or min(image.shape[:2]) < 1:
-                return None
+            if file_sha256:
+                if aspect_ratio is not None and int(stored_size) != self.settings["view_size"]:
+                    raise ValueError("Original proxy normalization differs from the requested view")
+                image = read_verification_view(filename, file_sha256, pixel_sha256, stored_size, codec)
+                self.counts["loaded_bytes"] += Path(filename).stat().st_size
+                ratio = 1.0 if aspect_ratio is None else float(aspect_ratio)
+                if not np.isfinite(ratio) or ratio <= 0:
+                    raise ValueError("Invalid original aspect ratio in verification metadata")
+                self.counts["decoded_proxy_views"] += 1
+            else:
+                content = Path(filename).read_bytes()
+                self.counts["loaded_bytes"] += len(content)
+                image = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if image is None or min(image.shape[:2]) < 1:
+                    return None
+                ratio = image.shape[1] / image.shape[0]
             self.counts["decoded_views"] += 1
-            height, width = image.shape[:2]
-            size = self.settings["view_size"]
-            interpolation = cv2.INTER_AREA if max(height, width) >= size else cv2.INTER_CUBIC
-            image = cv2.resize(image, (size, size), interpolation=interpolation)
+            image = normalized_original_view(image, self.settings["view_size"])
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-            return (image, width / height, float(gray.std()) / 255,
+            return (image, ratio, float(gray.std()) / 255,
                     float(cv2.Laplacian(gray, cv2.CV_32F).var()))
-        except (OSError, ValueError, cv2.error):
+        except (OSError, ValueError, TypeError, cv2.error):
+            self.counts["proxy_integrity_failures"] += bool(file_sha256)
             return None
+
+    def _row_view(self, index, row, kind):
+        path = _text(row.get("input_path" if kind == "original" else "crop_path"))
+        if kind == "crop":
+            path = path or _text(row.get("path"))
+        view = self._view(path)
+        if view is not None:
+            return view, False, False
+        proxy = _text(row.get(kind + "_verification_path"))
+        if not proxy:
+            return None, False, False
+        file_sha = _text(row.get(kind + "_verification_sha256"))
+        pixel_sha = _text(row.get(kind + "_verification_pixel_sha256"))
+        size = row.get(kind + "_verification_size")
+        codec = _text(row.get(kind + "_verification_codec"))
+        ratio = row.get("original_aspect_ratio") if kind == "original" else None
+        if not file_sha or not pixel_sha or not codec:
+            view = None
+        else:
+            view = self._view(proxy, file_sha, pixel_sha, size, codec, ratio)
+        if view is None:
+            self.unreadable_indices.add(index)
+            return None, True, True
+        return view, True, False
+
+    def _unreadable(self, first, second, missing, reason):
+        self.counts["unreadable_pairs"] += 1
+        self.unreadable_indices.update(missing)
+        if len(self.examples) < 10:
+            self.examples.append({
+                "sample_ids": [_text(first.get("sample_id")), _text(second.get("sample_id"))],
+                "reason": reason,
+            })
+        return False
 
     def _compare(self, first, second):
         if min(first[2], second[2]) < self.settings["min_gray_std"]:
@@ -94,13 +148,13 @@ class PixelNearDuplicateVerifier:
                 return True
         reasons = []
         available = {first_index: False, second_index: False}
-        for kind, column in (("crop", "crop_path"), ("original", "input_path")):
-            first_path = _text(first.get(column))
-            second_path = _text(second.get(column))
-            if kind == "crop":
-                first_path = first_path or _text(first.get("path"))
-                second_path = second_path or _text(second.get("path"))
-            first_view, second_view = self._view(first_path), self._view(second_path)
+        for kind in ("crop", "original"):
+            first_view, first_proxy, first_invalid = self._row_view(first_index, first, kind)
+            second_view, second_proxy, second_invalid = self._row_view(second_index, second, kind)
+            if first_invalid or second_invalid:
+                self.counts["unreadable_proxy_pairs"] += 1
+                missing = {index for index, invalid in ((first_index, first_invalid), (second_index, second_invalid)) if invalid}
+                return self._unreadable(first, second, missing, "Verification proxy is missing or fails integrity checks")
             available[first_index] |= first_view is not None
             available[second_index] |= second_view is not None
             if first_view is None or second_view is None:
@@ -114,25 +168,21 @@ class PixelNearDuplicateVerifier:
             if verified:
                 self.counts["verified_pairs"] += 1
                 self.counts["verified_" + kind + "_pairs"] += 1
+                self.counts["verified_" + kind + "_proxy_pairs"] += first_proxy or second_proxy
                 return True
         if reasons:
             self.counts["rejected_pairs"] += 1
             self.counts["low_texture_rejections"] += "low_texture" in reasons
         else:
-            self.counts["unreadable_pairs"] += 1
             missing = {index for index, found in available.items() if not found} or set(available)
-            self.unreadable_indices.update(missing)
-            if len(self.examples) < 10:
-                self.examples.append({
-                    "sample_ids": [_text(first.get("sample_id")), _text(second.get("sample_id"))],
-                    "reason": "No readable compatible original pair or crop pair",
-                })
+            return self._unreadable(first, second, missing, "No readable compatible original pair or crop pair")
         return False
 
     def report(self):
         keys = ("candidate_pairs", "verified_pairs", "rejected_pairs", "unreadable_pairs",
                 "exact_metadata_pairs", "verified_original_pairs", "verified_crop_pairs", "low_texture_rejections",
-                "decoded_views", "loaded_bytes")
+                "decoded_views", "loaded_bytes", "decoded_proxy_views", "proxy_integrity_failures",
+                "missing_proxy_views", "unreadable_proxy_pairs", "verified_crop_proxy_pairs", "verified_original_proxy_pairs")
         return {
             "mode": "pixel_verification", **{key: int(self.counts[key]) for key in keys},
             "unreadable_rows": len(self.unreadable_indices), "excluded_rows": len(self.unreadable_indices),

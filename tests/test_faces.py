@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
+from PIL import Image
 
 from src.preprocessing.faces import (
     YuNetFacePreprocessor, angle_bin, array_sha256, matrix_angles,
@@ -303,11 +304,52 @@ class FacePreprocessingTests(unittest.TestCase):
         self.assertEqual(row["input_path"], str(self.path))
         self.assertEqual(row["dataset"], "example")
         self.assertEqual(row["source_format"], "PNG")
+        self.assertEqual(row["source_jpeg_quality_bin"], "not_jpeg")
+        self.assertIsNone(row["source_jpeg_quality"])
         self.assertTrue(row["source_format_verified"])
         self.assertEqual(row["source_width"], 128)
         self.assertEqual(row["yaw_bin"], "three_quarter")
         self.assertEqual(len(row["phash"]), 16)
         self.assertTrue(row["crop_path"].endswith(".png"))
+
+    def test_jpeg_coding_metadata_describes_the_original_even_when_crops_are_png(self):
+        path = Path(self.directory.name) / "original.jpg"
+        Image.fromarray(self.image).save(path, quality=95, subsampling=2, progressive=True)
+        row = self.processor([[20, 20, 40, 40]]).process_record(
+            {"path": str(path), "target": 1, "dataset": "example", "source_jpeg_quality": 100},
+            Path(self.directory.name) / "jpeg-crops",
+        )[0]
+        self.assertEqual(row["source_format"], "JPEG")
+        self.assertEqual(row["source_jpeg_quality"], 95)
+        self.assertEqual(row["source_jpeg_quality_level"], "95")
+        self.assertEqual(row["source_jpeg_quality_bin"], "95")
+        self.assertEqual(row["source_jpeg_quality_method"], "exact_ijg_qtables")
+        self.assertEqual(row["source_jpeg_subsampling"], "4:2:0")
+        self.assertTrue(row["source_jpeg_progressive"])
+        self.assertTrue(row["crop_path"].endswith(".png"))
+        with Image.open(row["crop_path"]) as crop:
+            self.assertEqual(crop.format, "PNG")
+        self.assertEqual(len(row["source_jpeg_qtable_hash"]), 64)
+
+    def test_explicit_compact_mode_keeps_exact_verification_pixels_after_removing_own_png(self):
+        from src.preprocessing.verification_views import read_verification_view
+
+        processor = YuNetFacePreprocessor(
+            detector=Detector([[20, 20, 40, 40]]), landmarker=Landmarker(),
+            compact_verification_crops=True,
+        )
+        row = processor.process(self.path, target=1, output_dir=Path(self.directory.name) / "compact")[0]
+        self.assertTrue(row["training_crop_removed"])
+        self.assertFalse(Path(row["crop_path"]).exists())
+        expected, _, _ = adaptive_face_crop(self.image, row["bbox"])
+        actual = read_verification_view(
+            row["crop_verification_path"], row["crop_verification_sha256"],
+            row["crop_verification_pixel_sha256"], row["crop_verification_size"],
+            row["crop_verification_codec"],
+        )
+        np.testing.assert_array_equal(actual, expected)
+        self.assertEqual(array_sha256(actual), row["crop_sha256"])
+        self.assertTrue(Path(row["original_verification_path"]).is_file())
 
     def test_empty_and_broken_inputs_are_auditable(self):
         row = self.processor([]).process(self.path, target=0)[0]

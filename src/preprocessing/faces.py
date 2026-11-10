@@ -10,6 +10,9 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
+from src.preprocessing.jpeg import extract_jpeg_metadata
+from src.preprocessing.verification_views import save_original_verification_view, save_crop_verification_view
+
 
 FACE_OVAL = (10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
              397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
@@ -166,6 +169,7 @@ class YuNetFacePreprocessor:
         self, yunet_model=None, landmarker_model=None, *, size=256,
         expansion=1.3, min_face_size=32, detection_threshold=0.9,
         annotation_conflict_iou=0.8, crop_policy="adaptive", detector=None, landmarker=None,
+        compact_verification_crops=False,
     ):
         self.size = int(size)
         self.expansion = float(expansion)
@@ -173,6 +177,7 @@ class YuNetFacePreprocessor:
         self.detection_threshold = float(detection_threshold)
         self.annotation_conflict_iou = float(annotation_conflict_iou)
         self.crop_policy = str(crop_policy)
+        self.compact_verification_crops = bool(compact_verification_crops)
         self._mediapipe = None
         if self.size <= 0 or self.expansion < 1:
             raise ValueError("size must be positive and expansion must be at least one")
@@ -387,8 +392,9 @@ class YuNetFacePreprocessor:
                     source_format=source.format or "unknown", source_format_verified=True,
                     source_width=source.width, source_height=source.height,
                 )
+                base.update(extract_jpeg_metadata(source))
         except (OSError, ValueError):
-            pass
+            base.update(extract_jpeg_metadata(content))
         if image is None:
             return [dict(base, target=target, flags=["decoding_failed"],
                          exclusion_flags=["decoding_failed"], eligible=False,
@@ -397,6 +403,10 @@ class YuNetFacePreprocessor:
             decoded_sha256=array_sha256(image),
             image_width=image.shape[1], image_height=image.shape[0],
         )
+        if output_dir is not None:
+            base.update(save_original_verification_view(
+                image, content, Path(output_dir) / "verification_originals",
+            ))
         detections = self._detect(image)
         base.update(self._detection_audit)
         supplied = annotations is not None
@@ -469,8 +479,18 @@ class YuNetFacePreprocessor:
                      + ":" + self.crop_policy + ":" + str(bounds) + ":" + str(self.size)).encode()
                 ).hexdigest()[:24]
                 crop_path = destination / f"{identity}.png"
-                if not cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 3]):
+                if not cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 0 if self.compact_verification_crops else 9]):
                     raise OSError(f"cannot write crop {crop_path}")
+                row["crop_file_sha256"] = hashlib.sha256(crop_path.read_bytes()).hexdigest()
+                if self.compact_verification_crops:
+                    row.update(save_crop_verification_view(
+                        crop, destination / "verification_crops", original_metadata=base,
+                        crop_bounds=bounds, source_pixels=image,
+                    ))
+                    crop_path.unlink()
+                    row["training_crop_removed"] = True
+                else:
+                    row["training_crop_removed"] = False
                 crop_path = str(crop_path)
             flags = sorted(set(flags))
             exclusions = sorted(set(flags) & EXCLUSION_FLAGS)

@@ -44,6 +44,9 @@ class VerifiedGroupCacheTests(unittest.TestCase):
                 "flags": [], "exclusion_flags": [],
             })
         self.raw = pd.DataFrame(rows)
+        for column in ("original_verification_sha256", "original_verification_pixel_sha256",
+                       "original_aspect_ratio", "crop_verification_sha256", "crop_verification_pixel_sha256"):
+            self.raw[column] = None
         self.data = _prepare_raw(self.raw)
         verifier = PixelNearDuplicateVerifier(self.data)
         _connect(self.data, 4, verifier=verifier)
@@ -82,7 +85,9 @@ class VerifiedGroupCacheTests(unittest.TestCase):
             "bbox": [1, 0, 64, 64], "image_sha256": "changed",
             "decoded_sha256": "changed", "crop_sha256": "changed",
             "crop_file_sha256": "changed", "phash": "1234567890abcdef",
-            "sample_id": "new-id",
+            "sample_id": "new-id", "original_verification_sha256": "changed",
+            "original_verification_pixel_sha256": "changed", "original_aspect_ratio": 1.5,
+            "crop_verification_sha256": "changed", "crop_verification_pixel_sha256": "changed",
         }
         for column, value in mutations.items():
             with self.subTest(column=column):

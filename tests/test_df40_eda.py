@@ -200,6 +200,23 @@ class PlottingSmokeTests(unittest.TestCase):
         self.assertIn("PNG только у fake (лиц: 1)", E.format_target_finding(table))
         self.assertTrue(table.loc[table["source_format"].eq("JPEG"), "only_target"].eq("mixed").all())
 
+    def test_removed_png_is_replaced_by_the_identical_verified_crop(self):
+        from src.preprocessing.verification_views import save_crop_verification_view, view_pixel_sha256
+
+        row = self.frame.iloc[0].to_dict()
+        original = cv2.imread(row["input_path"])
+        crop = cv2.resize(original, (256, 256), interpolation=cv2.INTER_CUBIC)
+        row.update(save_crop_verification_view(crop, self.directory / "verified-crops"))
+        row["crop_path"] = str(self.directory / "removed-training-crop.png")
+        row["crop_sha256"] = view_pixel_sha256(crop)
+        np.testing.assert_array_equal(E._read_crop(row), crop)
+        frame = pd.DataFrame([row])
+        self.assertEqual(len(E.quality_sample(frame, maximum=1)), 1)
+        self.render(E.plot_examples(frame))
+        row["crop_verification_pixel_sha256"] = "different-pixels"
+        with self.assertRaisesRegex(ValueError, "not identical"):
+            E._read_crop(row)
+
     def test_pixel_panels_are_fresh_or_verified_historical_artifacts(self):
         root = self.directory
         metadata = root / "data/processed/df40/metadata.parquet"
@@ -237,6 +254,13 @@ class PlottingSmokeTests(unittest.TestCase):
         historical["figure_paths"]["examples"].write_bytes(b"changed figure")
         with self.assertRaisesRegex(ValueError, "Повреждён"):
             E.pixel_illustrations(root, self.frame, metadata)
+
+    def test_baseline_comparison_requires_the_same_input_cohort(self):
+        E.assert_same_cohort(self.parts, self.parts)
+        different = {name: frame.copy() for name, frame in self.parts.items()}
+        different["train"].iloc[0, different["train"].columns.get_loc("target")] = 1
+        with self.assertRaisesRegex(ValueError, "разным input records"):
+            E.assert_same_cohort(self.parts, different)
 
     def test_global_and_conditional_balance_comparison_uses_actual_manifests(self):
         global_metrics = E.global_split_divergences(self.parts)

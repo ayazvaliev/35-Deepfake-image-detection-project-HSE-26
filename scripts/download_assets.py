@@ -225,15 +225,64 @@ def extract_zip(archive, destination, wanted_names=None):
     return files
 
 
+def _kaggle_files_complete(root, files):
+    if not isinstance(files, list) or not files:
+        return False
+    checked = []
+    valid_metadata = True
+    seen = set()
+    for row in files:
+        if not isinstance(row, dict) or not isinstance(row.get('path'), str):
+            valid_metadata = False
+            continue
+        target = safe_target(root, row['path'])
+        if target == root.resolve() or Path(row['path']).is_absolute():
+            raise ValueError('Unsafe dataset file path')
+        if target in seen:
+            valid_metadata = False
+        seen.add(target)
+        size, checksum = row.get('bytes'), row.get('sha256')
+        valid_size = isinstance(size, int) and not isinstance(size, bool) and size >= 0
+        valid_hash = isinstance(checksum, str) and re.fullmatch(r'[0-9a-fA-F]{64}', checksum) is not None
+        valid_metadata = valid_metadata and valid_size and valid_hash
+        checked.append((target, size, checksum))
+    if not valid_metadata:
+        return False
+    return all(
+        path.is_file() and path.stat().st_size == size and file_hash(path).lower() == checksum.lower()
+        for path, size, checksum in checked
+    )
+
+
+def _kaggle_marker_complete(root, marker, slug):
+    if marker.is_symlink() or marker.with_name(marker.name + '.tmp').is_symlink():
+        raise ValueError('Unsafe dataset completion marker')
+    if not marker.is_file():
+        return False
+    try:
+        saved = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(saved, dict):
+        return False
+    if saved.get('source') != slug:
+        raise ValueError('Dataset completion marker belongs to a different dataset source')
+    return _kaggle_files_complete(root, saved.get('files'))
+
+
 def kaggle_dataset(slug, name):
-    root = RAW / name
+    root = safe_target(RAW, name)
     done = root / '.download_complete.json'
-    if done.exists():
+    if _kaggle_marker_complete(root, done, slug):
         print(name, 'already downloaded')
         return
     archive = download('https://www.kaggle.com/api/v1/datasets/download/' + slug, RAW / '.archives' / (name + '.zip'))
     files = extract_zip(archive, root)
-    done.write_text(json.dumps({'source': slug, 'archive_sha256': file_hash(archive), 'files': files}, indent=2))
+    if not _kaggle_files_complete(root, files):
+        raise RuntimeError('Extracted Kaggle files failed completion verification')
+    if done.is_symlink() or done.with_name(done.name + '.tmp').is_symlink():
+        raise ValueError('Unsafe dataset completion marker')
+    _write_download_json(done, {'source': slug, 'archive_sha256': file_hash(archive), 'files': files})
     archive.unlink()
 
 
@@ -323,11 +372,11 @@ def extract_mffi_selection(archive, destination, selected, default_split=None):
     return list(found.values())
 
 
-def mffi(limit, seed, include_test=True):
+def mffi(limit, seed, include_test=True, test_only=False):
     root = RAW / 'mffi'
     phase1 = root / 'phase1'
     done = phase1 / '.selection_complete.json'
-    if not selection_ready(done, limit, seed, root):
+    if not test_only and not selection_ready(done, limit, seed, root):
         source_url = MODELSCOPE + 'phase1.tar.gz'
         archive = download(source_url, RAW / '.archives' / 'mffi_phase1.tar.gz',
                            '9a5f9dd847d163a84e456872f6b608b53d957330148003d06f7a3386687f104b',
@@ -389,9 +438,12 @@ def main():
     parser.add_argument('--limit', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--skip-test', action='store_true')
+    parser.add_argument('--mffi-test-only', action='store_true')
     args = parser.parse_args()
     if args.limit < 1:
         parser.error('--limit must be positive')
+    if args.mffi_test_only and args.skip_test:
+        parser.error('--mffi-test-only cannot be combined with --skip-test')
     if args.kind == 'models':
         models()
         return
@@ -403,7 +455,7 @@ def main():
         elif dataset == 'openforensics':
             openforensics(args.limit, args.seed)
         elif dataset == 'mffi':
-            mffi(args.limit, args.seed, not args.skip_test)
+            mffi(args.limit, args.seed, not args.skip_test, test_only=args.mffi_test_only)
 
 
 if __name__ == '__main__':
