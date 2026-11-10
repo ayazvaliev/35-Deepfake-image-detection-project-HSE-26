@@ -11,7 +11,7 @@
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?logo=scikitlearn&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
-![Status](https://img.shields.io/badge/статус-чекпойнт_1-yellow)
+![Status](https://img.shields.io/badge/статус-чекпойнт_2-yellow)
 
 </div>
 
@@ -32,7 +32,7 @@
 | Дмитрий Маслов | [@Dima-ML](https://github.com/Dima-ML) |
 | Аяз Валиев | [@ayazvaliev](https://github.com/ayazvaliev) |
 | Герта Лазовская | [@Gerta-L](https://github.com/Gerta-L) |
-| Андрей Устамчук | [@username](https://github.com/username) |
+| Андрей Устамчук | – |
 
 **Куратор:** Илья Скворцов
 
