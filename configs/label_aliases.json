@@ -1,0 +1,458 @@
+{
+  "registry_version": "2026-11-09.1",
+  "source_refs": {
+    "project_taxonomy": "User-provided project taxonomy for manipulation and transformation families",
+    "df40": "https://github.com/YZY-stack/DF40",
+    "whichfaceisreal_methods": "https://whichfaceisreal.com/methods.html",
+    "stylegan": "https://github.com/NVlabs/stylegan",
+    "stylegan2": "https://github.com/NVlabs/stylegan2",
+    "stylegan3": "https://github.com/NVlabs/stylegan3",
+    "stable_diffusion_2_1": "https://huggingface.co/stabilityai/stable-diffusion-2-1",
+    "faceswap": "https://github.com/deepfakes/faceswap"
+  },
+  "generators": {
+    "unknown": {
+      "aliases": [
+        "",
+        "unknown",
+        "unlabeled",
+        "unlabelled",
+        "unspecified",
+        "not available",
+        "not provided",
+        "n/a",
+        "na",
+        "nan",
+        "none",
+        "null"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ],
+      "kind": "missing"
+    },
+    "real": {
+      "aliases": [
+        "real",
+        "original",
+        "authentic",
+        "genuine"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ],
+      "kind": "real"
+    },
+    "stylegan": {
+      "aliases": [
+        "StyleGAN",
+        "Style GAN",
+        "StyleGAN1",
+        "StyleGAN v1"
+      ],
+      "source_refs": [
+        "stylegan"
+      ],
+      "kind": "algorithm"
+    },
+    "stylegan2": {
+      "aliases": [
+        "StyleGAN2",
+        "StyleGAN v2"
+      ],
+      "source_refs": [
+        "stylegan2"
+      ],
+      "kind": "algorithm"
+    },
+    "stylegan2_ada": {
+      "aliases": [
+        "StyleGAN2-ADA",
+        "StyleGAN2 ADA"
+      ],
+      "source_refs": [
+        "stylegan2"
+      ],
+      "kind": "algorithm"
+    },
+    "stylegan3": {
+      "aliases": [
+        "StyleGAN3",
+        "StyleGAN v3"
+      ],
+      "source_refs": [
+        "stylegan3"
+      ],
+      "kind": "algorithm"
+    },
+    "stylegan_xl": {
+      "aliases": [
+        "StyleGANXL",
+        "StyleGAN-XL",
+        "StyleGAN XL"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "stargan": {
+      "aliases": [
+        "StarGAN",
+        "StarGAN1",
+        "StarGAN v1"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "stargan_v2": {
+      "aliases": [
+        "StarGANv2",
+        "StarGAN2",
+        "StarGAN v2"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "stable_diffusion_2_1": {
+      "aliases": [
+        "sd2.1",
+        "SD-2.1",
+        "SD_2_1",
+        "StableDiffusion2.1",
+        "Stable Diffusion 2.1",
+        "Stable Diffusion v2.1"
+      ],
+      "source_refs": [
+        "stable_diffusion_2_1"
+      ],
+      "kind": "algorithm"
+    },
+    "vqgan": {
+      "aliases": [
+        "VQGAN",
+        "VQ GAN"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "ddim": {
+      "aliases": [
+        "DDIM"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "ddpm": {
+      "aliases": [
+        "DDPM"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "rddm": {
+      "aliases": [
+        "RDDM"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "pixart": {
+      "aliases": [
+        "PixArt"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "pixart_alpha": {
+      "aliases": [
+        "PixArt-alpha",
+        "PixArtAlpha",
+        "PixArt-α",
+        "PixArt α"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "dit": {
+      "aliases": [
+        "DiT"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "dit_xl_2": {
+      "aliases": [
+        "DiT-XL/2",
+        "DiT XL/2",
+        "DiTXL2"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "sit": {
+      "aliases": [
+        "SiT"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "sit_xl_2": {
+      "aliases": [
+        "SiT-XL/2",
+        "SiT XL/2",
+        "SiTXL2"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "midjourney": {
+      "aliases": [
+        "MidJourney"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "midjourney_v6": {
+      "aliases": [
+        "MidJourney6",
+        "MidJourney v6",
+        "MidJourney 6"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "whichfaceisreal": {
+      "aliases": [
+        "whichfaceisreal",
+        "WhichisReal",
+        "Which Face Is Real"
+      ],
+      "source_refs": [
+        "df40",
+        "whichfaceisreal_methods"
+      ],
+      "kind": "benchmark_method"
+    },
+    "collabdiff": {
+      "aliases": [
+        "CollabDiff",
+        "Collab Diff",
+        "Collaborative Diffusion",
+        "collaborative_diffusion"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "e4e": {
+      "aliases": [
+        "e4e",
+        "encoder4editing",
+        "Encoder 4 Editing"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "styleclip": {
+      "aliases": [
+        "StyleCLIP",
+        "Style CLIP"
+      ],
+      "source_refs": [
+        "df40"
+      ],
+      "kind": "algorithm"
+    },
+    "faceswap": {
+      "aliases": [
+        "FaceSwap",
+        "Face Swap",
+        "face_swap"
+      ],
+      "source_refs": [
+        "faceswap"
+      ],
+      "kind": "algorithm"
+    }
+  },
+  "families": {
+    "face_synthesis": {
+      "aliases": [
+        "EFS",
+        "EntireFaceSynthesis",
+        "Entire Face Synthesis",
+        "entire_face_synthesis",
+        "Face Synthesis"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "face_edit": {
+      "aliases": [
+        "FE",
+        "FaceEditing",
+        "Face Editing",
+        "Face Edit"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "face_swap": {
+      "aliases": [
+        "FS",
+        "FaceSwap",
+        "Face Swap",
+        "Face Swapping"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "face_reenactment": {
+      "aliases": [
+        "FR",
+        "Face Reenactment",
+        "FaceReenactment",
+        "reenactment",
+        "face_reenactment"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "super_resolution": {
+      "aliases": [
+        "FSR",
+        "SuperResolution",
+        "Super Resolution",
+        "super_resolution"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "manual_edit": {
+      "aliases": [
+        "FMPS",
+        "MFPS",
+        "manualPhotoshop",
+        "Manual Photoshop",
+        "Manual Edit"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "real": {
+      "aliases": [
+        "real",
+        "original",
+        "authentic",
+        "genuine"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    },
+    "unknown": {
+      "aliases": [
+        "",
+        "unknown",
+        "unlabeled",
+        "unlabelled",
+        "unspecified",
+        "not available",
+        "not provided",
+        "n/a",
+        "na",
+        "nan",
+        "none",
+        "null"
+      ],
+      "source_refs": [
+        "project_taxonomy"
+      ]
+    }
+  },
+  "dataset_generator_aliases": {
+    "df40": {
+      "pixart_alpha": {
+        "aliases": [
+          "pixart"
+        ],
+        "source_refs": [
+          "df40"
+        ]
+      },
+      "dit_xl_2": {
+        "aliases": [
+          "dit"
+        ],
+        "source_refs": [
+          "df40"
+        ]
+      },
+      "sit_xl_2": {
+        "aliases": [
+          "sit"
+        ],
+        "source_refs": [
+          "df40"
+        ]
+      },
+      "midjourney_v6": {
+        "aliases": [
+          "midjourney"
+        ],
+        "source_refs": [
+          "df40"
+        ]
+      },
+      "stylegan": {
+        "aliases": [
+          "whichfaceisreal",
+          "WhichisReal",
+          "Which Face Is Real"
+        ],
+        "source_refs": [
+          "df40",
+          "whichfaceisreal_methods"
+        ]
+      }
+    }
+  }
+}

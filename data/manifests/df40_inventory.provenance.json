@@ -1,0 +1,79 @@
+{
+  "metadata_url": "https://drive.usercontent.google.com/download?id=1rsyQVdpAcgFsPbQdlSrpPbejV-8kBbbh&export=download&confirm=t",
+  "metadata_sha256": "6308d04ffd0e9da59a7df058bf6a27ae41da0a15f03add8a11f694f510a5b2f6",
+  "metadata_bytes": 125339450,
+  "official_repository": "https://github.com/YZY-stack/DF40",
+  "metadata_listing_may_be_truncated": true,
+  "author_split_protocol": "Official combined DF40_all.json exact-path assignments override archive partitions; unmatched paths retain released archive train/test. Per-method held-out JSONs represent a different protocol and are not mixed into this inventory.",
+  "population_n": 619733,
+  "author_mapping_counts": {
+    "archive_partition_only": 591274,
+    "matched": 28459
+  },
+  "author_partition_counts": {
+    "test": 375384,
+    "train": 244349
+  },
+  "author_split_inventory": [
+    "test",
+    "train"
+  ],
+  "snapshot_sha256": "fd5e067a5f110ec8a524b9cc2c743eaa055082c006aa3fc0c074048093f61e3d",
+  "snapshot_bytes": 15622428,
+  "snapshot_population": 619733,
+  "snapshot_native_methods": [
+    "CollabDiff",
+    "DiT",
+    "MidJourney",
+    "RDDM",
+    "SiT",
+    "StyleGAN2",
+    "StyleGAN3",
+    "StyleGANXL",
+    "VQGAN",
+    "ddim",
+    "e4e",
+    "pixart",
+    "sd2.1",
+    "stargan",
+    "starganv2",
+    "styleclip",
+    "whichfaceisreal"
+  ],
+  "snapshot_schema": 1,
+  "derived_real_manipulation": "real",
+  "source_authority": "Captured primary Google Drive ZIP directories and combined DF40_all.json; no image pixels included.",
+  "exact_selection_100k_seed42_unchanged": true,
+  "source_group_semantics_version": 3,
+  "source_group_policy": {
+    "unconditional_efs": "Individual generated images with unknown identity/lineage; generation_batch is audit-only, never a must-link grouping key.",
+    "native_real": "Method/domain/archive-local image identifiers; numeric filenames do not prove global FFHQ/CelebA identity.",
+    "conditional_fe": "Only documented/explicit source identifiers are grouped, including verified FF/CDF source IDs. Generic or merely numeric edit directories do not establish source linkage.",
+    "primary_evidence": [
+      "https://arxiv.org/html/2406.13495v2#A2.SS4",
+      "https://github.com/YZY-stack/DF40/blob/ce808160e0df31544b41c7b60b942849ba88bca8/EFS_finetune_code/diffusion_based/test_scripts/test_sd_lora.py#L109-L121",
+      "https://github.com/YZY-stack/DF40/blob/ce808160e0df31544b41c7b60b942849ba88bca8/EFS_finetune_code/diffusion_based/test_scripts/test_pixart.py#L37-L46",
+      "https://github.com/YZY-stack/DF40/blob/ce808160e0df31544b41c7b60b942849ba88bca8/EFS_finetune_code/diffusion_based/test_scripts/test_ddim.py#L88-L100"
+    ],
+    "generic_e4e_inversions": "Individual edited images when generic inversions folders provide no explicit source identifier; preserve verified FF/CDF and paired FE source identifiers.",
+    "independence_caveat": "Individual grouping does not assert distinct people. Only documented source/latent relationships or verified duplicate evidence creates links.",
+    "unverified_fe": "Each FE output without an explicit source identifier is an image-level unknown-lineage unit. No must-link is inferred from directories, including stargan/fake/fake and singleton CollabDiff numeric folders."
+  },
+  "lineage_corrections": [
+    {
+      "version": 3,
+      "prior_snapshot_sha256": "98317e4a252122d60c393fc52d025b3cb3b04837c6e7dbff5c83c0e6f096292e",
+      "snapshot_sha256": "29a6d883e34c19bbdea2435050db4764d8f77f6422bf9b3ec2ad1bfaa41f8d44",
+      "immutable_columns_sha256": "cb9f68800112c8ea1eaac7b93c038f37e87d0e7a2ae18477ee342ae675893c37",
+      "primary_member_and_target_metadata_unchanged": true
+    },
+    {
+      "version": 3,
+      "revision": "all_unverified_fe_image_level",
+      "prior_snapshot_sha256": "29a6d883e34c19bbdea2435050db4764d8f77f6422bf9b3ec2ad1bfaa41f8d44",
+      "snapshot_sha256": "fd5e067a5f110ec8a524b9cc2c743eaa055082c006aa3fc0c074048093f61e3d",
+      "immutable_columns_sha256": "cb9f68800112c8ea1eaac7b93c038f37e87d0e7a2ae18477ee342ae675893c37",
+      "primary_member_and_target_metadata_unchanged": true
+    }
+  ]
+}
